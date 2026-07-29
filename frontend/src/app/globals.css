@@ -1,0 +1,143 @@
+﻿@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Make dark: variants respond to the .dark class on <html> */
+@custom-variant dark (&:is(.dark *));
+
+/* Map CSS variables to Tailwind utility classes */
+@theme inline {
+  --color-background:           var(--background);
+  --color-foreground:           var(--foreground);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-primary:              var(--primary);
+  --color-primary-foreground:   var(--primary-foreground);
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted:                var(--muted);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-destructive:          var(--destructive);
+  --color-border:               var(--border);
+  --color-input:                var(--input);
+  --color-ring:                 var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-inter);
+}
+
+/* LIGHT theme */
+:root {
+  --background:            #ffffff;
+  --foreground:            #0f0f0f;
+  --card:                  #f9f9f9;
+  --card-foreground:       #0f0f0f;
+  --popover:               #ffffff;
+  --popover-foreground:    #0f0f0f;
+  --primary:               #5e6ad2;
+  --primary-foreground:    #ffffff;
+  --secondary:             #f4f4f5;
+  --secondary-foreground:  #0f0f0f;
+  --muted:                 #f4f4f5;
+  --muted-foreground:      #71717a;
+  --accent:                #f4f4f5;
+  --accent-foreground:     #0f0f0f;
+  --destructive:           #ef4444;
+  --border:                #e5e5e5;
+  --input:                 #e5e5e5;
+  --ring:                  #5e6ad2;
+  --radius:                0.5rem;
+}
+
+/* DARK theme — Linear-style */
+.dark {
+  --background:            #0f0f0f;
+  --foreground:            #f0f0f0;
+  --card:                  #171717;
+  --card-foreground:       #f0f0f0;
+  --popover:               #1a1a1a;
+  --popover-foreground:    #f0f0f0;
+  --primary:               #6470e0;
+  --primary-foreground:    #ffffff;
+  --secondary:             #1e1e1e;
+  --secondary-foreground:  #f0f0f0;
+  --muted:                 #1e1e1e;
+  --muted-foreground:      #737373;
+  --accent:                #262626;
+  --accent-foreground:     #f0f0f0;
+  --destructive:           #f87171;
+  --border:                #262626;
+  --input:                 #262626;
+  --ring:                  #6470e0;
+}
+
+/* PURPLE theme */
+.purple {
+  --background:            #0d0814;
+  --foreground:            #f0eaf8;
+  --card:                  #130c1d;
+  --card-foreground:       #f0eaf8;
+  --popover:               #160e21;
+  --popover-foreground:    #f0eaf8;
+  --primary:               #a855f7;
+  --primary-foreground:    #ffffff;
+  --secondary:             #1c1126;
+  --secondary-foreground:  #f0eaf8;
+  --muted:                 #1c1126;
+  --muted-foreground:      #9370b8;
+  --accent:                #221430;
+  --accent-foreground:     #f0eaf8;
+  --destructive:           #f87171;
+  --border:                #2a1840;
+  --input:                 #2a1840;
+  --ring:                  #a855f7;
+  --radius:                0.5rem;
+}
+
+/* MIDNIGHT theme */
+.midnight {
+  --background:            #060912;
+  --foreground:            #e8eaf6;
+  --card:                  #090d1a;
+  --card-foreground:       #e8eaf6;
+  --popover:               #0c1020;
+  --popover-foreground:    #e8eaf6;
+  --primary:               #4f63ff;
+  --primary-foreground:    #ffffff;
+  --secondary:             #0e1425;
+  --secondary-foreground:  #e8eaf6;
+  --muted:                 #0e1425;
+  --muted-foreground:      #7c84a3;
+  --accent:                #131a30;
+  --accent-foreground:     #e8eaf6;
+  --destructive:           #f87171;
+  --border:                #171e35;
+  --input:                 #171e35;
+  --ring:                  #4f63ff;
+  --radius:                0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@keyframes confetti-fall {
+  0%   { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(400px) rotate(720deg); opacity: 0; }
+}
+
+.animate-confetti-fall {
+  animation: confetti-fall linear forwards;
+}
