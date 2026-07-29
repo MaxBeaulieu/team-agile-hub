@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.next/
+out/
+dist/
+obj/
+bin/
+publish/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Logs
+*.log
+npm-debug.log*
+
+# EF Core migrations snapshots that reference local DB
+# (keep migration files, exclude temp files)
+backend/obj/
+
+# Fly.io
+.fly/
