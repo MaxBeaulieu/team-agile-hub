@@ -86,12 +86,26 @@ export type TeamMemberData = {
   joinedAt: string;
 };
 
+export type ActionItemData = {
+  id: string;
+  sprintId: string | null;
+  retroSessionId: string | null;
+  retroCardId: string | null;
+  type: string;
+  assigneeId: string | null;
+  text: string;
+  dueDate: string | null;
+  status: string;
+  createdAt: string;
+};
+
 export type RetroData = {
   session: RetroSession;
   cards: RetroCard[];
   hiddenCounts: Record<string, number>;
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
+  actionItems: ActionItemData[];
   retroName: string;
 };
 
@@ -365,6 +379,16 @@ function RetroInner({ retroId }: { retroId: string }) {
         },
         scheduleRefresh,
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "action_items",
+          filter: `retro_session_id=eq.${sessionId}`,
+        },
+        scheduleRefresh,
+      )
       .subscribe();
 
     return () => {
@@ -400,8 +424,15 @@ function RetroInner({ retroId }: { retroId: string }) {
     );
   }
 
-  const { session, cards, hiddenCounts, moodCheckins, teamMembers, retroName } =
-    data;
+  const {
+    session,
+    cards,
+    hiddenCounts,
+    moodCheckins,
+    teamMembers,
+    actionItems,
+    retroName,
+  } = data;
   const isFacilitator = session.facilitatorId === currentUserId;
 
   const checkedInCount = new Set(
@@ -417,6 +448,7 @@ function RetroInner({ retroId }: { retroId: string }) {
     hiddenCounts,
     moodCheckins,
     teamMembers,
+    actionItems: actionItems ?? [],
     currentUserId,
     isFacilitator,
     onRefresh: load,

@@ -4,11 +4,13 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { CheckCircle2 } from "lucide-react";
+import { CardActionItems } from "./discuss-panel";
 import type {
   RetroSession,
   MoodCheckin,
   RetroCard,
   TeamMemberData,
+  ActionItemData,
 } from "./page";
 
 const MOODS = [
@@ -24,6 +26,7 @@ type Props = {
   cards: RetroCard[];
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
+  actionItems: ActionItemData[];
   currentUserId: string;
   isFacilitator: boolean;
   onRefresh: () => void;
@@ -86,6 +89,7 @@ export function WrapUpPanel({
   cards,
   moodCheckins,
   teamMembers,
+  actionItems,
   currentUserId,
   isFacilitator,
   onRefresh,
@@ -109,15 +113,35 @@ export function WrapUpPanel({
     }
   }
 
-  // Action items = retro cards that were marked with type = action
-  // We surface this from discuss panel server data; for wrapup we just show discussed stats
   const discussedCards = cards.filter((c) => c.isDiscussed);
   const totalCards = cards.length;
 
-  // Cards that captured discussion notes, listed in the summary (EE-160).
-  const notedCards = cards
-    .map((card) => ({ card, notes: card.discussionNotes?.trim() ?? "" }))
-    .filter((n) => n.notes.length > 0);
+  // Notes + action items grouped per card, so the summary is a full record of
+  // what was said and what was decided (EE-160).
+  const itemsByCard = actionItems.reduce<Record<string, ActionItemData[]>>(
+    (acc, item) => {
+      if (item.retroCardId) {
+        const bucket = acc[item.retroCardId] ?? [];
+        bucket.push(item);
+        acc[item.retroCardId] = bucket;
+      }
+      return acc;
+    },
+    {},
+  );
+
+  const outcomeCards = cards
+    .map((card) => ({
+      card,
+      notes: card.discussionNotes?.trim() ?? "",
+      items: itemsByCard[card.id] ?? [],
+    }))
+    .filter((o) => o.notes.length > 0 || o.items.length > 0);
+
+  const cardIds = new Set(cards.map((c) => c.id));
+  const unlinkedItems = actionItems.filter(
+    (i) => !i.retroCardId || !cardIds.has(i.retroCardId),
+  );
 
   // Entry vs exit mood comparison
   const exitCheckedCount = moodCheckins.filter(
@@ -194,10 +218,10 @@ export function WrapUpPanel({
       </div>
 
       {/* Discussion notes per card */}
-      {notedCards.length > 0 && (
+      {(outcomeCards.length > 0 || unlinkedItems.length > 0) && (
         <div className="space-y-2">
-          <p className="text-sm font-semibold">Discussion Notes</p>
-          {notedCards.map(({ card, notes }) => (
+          <p className="text-sm font-semibold">Notes &amp; Action Items</p>
+          {outcomeCards.map(({ card, notes, items }) => (
             <div
               key={card.id}
               className="space-y-2 rounded-lg border border-border bg-card px-3 py-2.5"
@@ -210,11 +234,23 @@ export function WrapUpPanel({
                   {card.content}
                 </p>
               </div>
-              <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
-                {notes}
-              </p>
+              {notes && (
+                <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+                  {notes}
+                </p>
+              )}
+              <CardActionItems items={items} />
             </div>
           ))}
+
+          {unlinkedItems.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-border bg-card px-3 py-2.5">
+              <p className="text-xs text-muted-foreground font-medium">
+                Other action items
+              </p>
+              <CardActionItems items={unlinkedItems} />
+            </div>
+          )}
         </div>
       )}
 

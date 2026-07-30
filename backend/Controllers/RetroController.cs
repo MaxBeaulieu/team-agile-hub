@@ -557,13 +557,14 @@ public class RetroController(SupabaseService sb) : ControllerBase
 
         var item = new ActionItem
         {
-            SprintId    = session.SprintId.Value,
-            Type        = ActionItemType.Retro,
-            AssigneeId  = req.AssigneeId,
-            Text        = req.Text.Trim(),
-            DueDate     = req.DueDate,
-            Status      = ActionItemStatus.Open,
-            RetroCardId = retroCardId,
+            SprintId       = session.SprintId.Value,
+            RetroSessionId = session.Id,
+            Type           = ActionItemType.Retro,
+            AssigneeId     = req.AssigneeId,
+            Text           = req.Text.Trim(),
+            DueDate        = req.DueDate,
+            Status         = ActionItemStatus.Open,
+            RetroCardId    = retroCardId,
         };
 
         var inserted = (await sb.Db.From<ActionItem>().Insert(item)).Models.First();

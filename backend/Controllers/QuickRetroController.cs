@@ -138,6 +138,11 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
 
         var participant = CurrentUserAsParticipant(session.CreatedAt);
 
+        var actionItems = (await sb.Db.From<ActionItem>()
+            .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
+            .Order("created_at", Ordering.Ascending)
+            .Get()).Models;
+
         return Ok(new
         {
             Session = session,
@@ -145,6 +150,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
             HiddenCounts = hiddenCounts,
             MoodCheckins = moodCheckins,
             TeamMembers = new List<TeamMember> { participant },
+            ActionItems = actionItems,
             RetroName = session.Name,
         });
     }
@@ -412,6 +418,40 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
         await sb.Db.From<RetroSession>().Update(session);
         return Ok(session);
     }
+
+    // POST api/quickretro/{id}/action-items
+    [HttpPost("api/quickretro/{id:guid}/action-items")]
+    public async Task<IActionResult> CreateActionItem(Guid id, [FromBody] QuickCreateActionItemRequest req)
+    {
+        var session = await GetOwnedSession(id);
+        if (session is null) return NotFound();
+        if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest("Text is required.");
+
+        // Only accept a card that actually belongs to this session.
+        Guid? retroCardId = null;
+        if (req.RetroCardId.HasValue)
+        {
+            var card = (await sb.Db.From<RetroCard>()
+                .Filter("id", Operator.Equals, req.RetroCardId.Value.ToString())
+                .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
+                .Get()).Models.FirstOrDefault();
+            if (card is null) return BadRequest("Card does not belong to this retro session.");
+            retroCardId = card.Id;
+        }
+
+        var item = new ActionItem
+        {
+            SprintId = null,
+            RetroSessionId = session.Id,
+            RetroCardId = retroCardId,
+            Type = ActionItemType.Retro,
+            Text = req.Text.Trim(),
+            Status = ActionItemStatus.Open,
+        };
+
+        var inserted = (await sb.Db.From<ActionItem>().Insert(item)).Models.First();
+        return Ok(inserted);
+    }
 }
 
 public record QuickCreateRetroRequest(
@@ -438,3 +478,5 @@ public record QuickMoodRequest(int? EntryMood, int? ExitMood);
 public record QuickAdvanceSpeakerRequest(Guid? SpeakerId);
 
 public record QuickSetDiscussRequest(Guid? CardId);
+
+public record QuickCreateActionItemRequest(string Text, Guid? RetroCardId);
