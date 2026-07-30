@@ -1,4 +1,4 @@
--- Migration 007: allow retro invite-link participants through RLS
+-- Migration 008: allow retro invite-link participants through RLS
 -- 006_retro_invite_participants.sql added retro_participants + is_retro_participant().
 -- The SELECT policies added in 004_retro_improvements.sql only check
 -- is_sprint_member(), so anonymous/guest invite-link joiners (who aren't on the

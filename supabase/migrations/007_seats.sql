@@ -1,4 +1,4 @@
--- Migration 006: Office floor seats
+-- Migration 007: Office floor seats
 -- One physical floor, edited a few times a year. Seats are seeded from the
 -- floor plan geometry; assignment, notes and defect reports are user driven.
 

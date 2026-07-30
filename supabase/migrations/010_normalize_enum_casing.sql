@@ -1,5 +1,5 @@
 -- ============================================================
--- 009: Normalize legacy enum casing to lowercase/snake_case
+-- 010: Normalize legacy enum casing to lowercase/snake_case
 --
 -- `001_initial_schema.sql` declared several text "enum" columns with
 -- PascalCase check constraints ('Member'/'Admin', 'Planning'/'Active'/...),

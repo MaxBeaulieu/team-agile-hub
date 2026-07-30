@@ -1,4 +1,4 @@
--- Migration 008: base table grants for anon/authenticated/service_role
+-- Migration 009: base table grants for anon/authenticated/service_role
 --
 -- On Supabase Cloud, these grants are provisioned automatically by the
 -- platform, so our migrations never needed to set them explicitly. On a
