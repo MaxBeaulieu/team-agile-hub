@@ -9,14 +9,25 @@
   background: var(--fp-paper);
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   color-scheme: light;
 }
 
+/* The only scrolling region — the footer below it stays put. */
+.fp-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .fp-inner {
-  max-width: 1360px;
-  margin: 0 auto;
-  padding: 18px 20px 40px;
+  height: 100%;
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 8px;
 }
 
 /* ---------- toolbar ---------- */
@@ -25,17 +36,17 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   border-bottom: 1px solid var(--fp-hairline);
-  padding-bottom: 13px;
-  margin-bottom: 14px;
+  padding-bottom: 7px;
+  margin-bottom: 7px;
 }
 
 .fp-brand {
   font-family: var(--fp-font-cond), system-ui, sans-serif;
   font-weight: 600;
-  font-size: 19px;
-  line-height: 1.15;
+  font-size: 17px;
+  line-height: 1.1;
 }
 
 .fp-brand span {
@@ -49,6 +60,21 @@
 
 .fp-spacer {
   flex: 1;
+}
+
+.fp-groups {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.fp-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .fp-lbl {
@@ -154,14 +180,16 @@ a.fp-chip {
   margin: 0 0 12px;
 }
 
-/* ---------- stats ---------- */
+/* ---------- stats (below the plan) ---------- */
 
 .fp-stats {
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-top: 6px;
+  border-top: 1px solid var(--fp-hairline);
+  padding-top: 6px;
 }
 
 .fp-stat-hero {
@@ -172,7 +200,7 @@ a.fp-chip {
 }
 
 .fp-stat-hero strong {
-  font-size: 26px;
+  font-size: 21px;
   font-weight: 600;
   line-height: 1;
 }
@@ -232,15 +260,27 @@ a.fp-chip {
 /* ---------- stage ---------- */
 
 .fp-stage {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  gap: 16px;
-  align-items: flex-start;
+  gap: 12px;
+  align-items: stretch;
 }
 
+/* Sizing container for the plan: the wrap below reads its width and height. */
+.fp-mapbox {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  container-type: size;
+}
+
+/* Whichever of width or height runs out first caps the plan, so the box always
+   matches the SVG exactly and the overlays keep lining up with it. */
 .fp-mapwrap {
   position: relative;
-  flex: 1;
-  min-width: 0;
+  width: min(100cqw, calc(100cqh * var(--fp-plan-ratio)));
 }
 
 .fp-mapwrap svg {
@@ -255,7 +295,7 @@ a.fp-chip {
   border: 1px solid var(--fp-hairline);
   border-radius: 8px;
   background: var(--fp-surface);
-  max-height: 80vh;
+  max-height: 100%;
   overflow: auto;
 }
 
@@ -265,32 +305,77 @@ a.fp-chip {
   padding-bottom: 10px;
 }
 
-.fp-detail {
-  border-bottom: 1px solid var(--fp-hairline);
-  background: var(--fp-surface-alt);
-  padding-bottom: 14px;
-}
+/* ---------- seat action bar (above the plan) ---------- */
 
-.fp-detail-name {
-  font-family: var(--fp-font-cond), system-ui, sans-serif;
-  font-weight: 600;
-  font-size: 17px;
-  padding: 0 14px;
-}
-
-.fp-detail-line {
+.fp-actbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 14px 0;
-  font-size: 12px;
-  color: var(--fp-ink-2);
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 4px 10px 4px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--fp-act-edge);
+  border-left: 3px solid var(--fp-act-accent);
+  border-radius: 8px;
+  background: var(--fp-act-bg);
+  color: var(--fp-act-ink);
 }
 
-.fp-detail-line i {
+.fp-actbar.is-empty {
+  border-left-color: var(--fp-act-edge);
+  background: var(--fp-act-surface);
+}
+
+.fp-act-seat {
+  font-family: var(--fp-font-mono), monospace;
+  font-size: 11.5px;
+  color: var(--fp-act-ink-3);
+  white-space: nowrap;
+}
+
+.fp-act-name {
+  font-family: var(--fp-font-cond), system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fp-act-ink);
+}
+
+.fp-act-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fp-act-ink-2);
+  white-space: nowrap;
+}
+
+.fp-act-line i {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.fp-act-warn {
+  font-size: 12px;
+  color: var(--fp-oos-ink);
+  white-space: nowrap;
+}
+
+.fp-act-empty {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--fp-act-ink-3);
+}
+
+/* The reason field claims whatever width is left over. */
+.fp-act-report {
+  flex: 1 1 240px;
+  min-width: 0;
 }
 
 .fp-tag {
@@ -298,85 +383,223 @@ a.fp-chip {
   font-size: 10px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  border: 1px solid var(--fp-free-edge);
-  color: var(--fp-free-edge);
+  border: 1px solid var(--fp-act-accent);
+  color: var(--fp-act-accent);
   border-radius: 9px;
   padding: 0 6px;
+  margin-left: 4px;
 }
 
-.fp-detail-kit {
+/* ---------- equipment present / absent ---------- */
+
+.fp-kit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   list-style: none;
-  margin: 8px 0 0;
-  padding: 0 14px;
-  font-size: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.fp-kit li,
+.fp-tip-kit span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
   color: var(--fp-ink-2);
+  white-space: nowrap;
 }
 
-.fp-detail-kit li.is-missing {
-  color: var(--fp-oos-edge);
+.fp-kit i,
+.fp-tip-kit i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  border: 1px solid var(--fp-surface);
 }
 
-.fp-detail-warn {
-  margin: 8px 14px 0;
-  font-size: 12px;
-  color: var(--fp-oos-ink);
+.fp-kit .is-on i,
+.fp-tip-kit .is-on i {
+  background: var(--fp-kit-on);
 }
 
-.fp-detail-sec {
-  padding: 0 14px;
+.fp-kit .is-off,
+.fp-tip-kit .is-off {
+  color: var(--fp-kit-off);
 }
 
-.fp-detail-h {
+.fp-kit .is-off i,
+.fp-tip-kit .is-off i {
+  background: var(--fp-kit-off);
+}
+
+.fp-kit-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: -2px -7px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fp-kit-toggle:hover:not(:disabled) {
+  border-color: var(--fp-act-edge);
+  background: var(--fp-act-surface);
+}
+
+.fp-kit-toggle:focus-visible {
+  outline: 2px solid var(--fp-act-accent);
+  outline-offset: 1px;
+}
+
+.fp-kit-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- seat note (docked inside the VP office) ---------- */
+
+/* Positioned from the VP office rect by FloorMap, so it tracks the plan at
+   any width. */
+.fp-vp {
+  position: absolute;
+  display: flex;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--fp-hairline);
+  background: var(--fp-surface-alt);
+}
+
+.fp-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  overflow: hidden;
+}
+
+.fp-note-mark {
   font-family: var(--fp-font-cond), system-ui, sans-serif;
   font-weight: 600;
   font-size: 10.5px;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--fp-ink-3);
-  padding: 13px 0 5px;
+  white-space: nowrap;
 }
 
-.fp-detail-note {
-  margin: 0 0 7px;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-
-.fp-detail-empty {
-  margin: 0 0 7px;
-  padding: 0 14px;
-  font-size: 13px;
+.fp-note-hint {
+  margin: 0;
+  font-size: 12px;
   font-style: italic;
   color: var(--fp-ink-3);
 }
 
-.fp-detail-sec .fp-detail-empty {
-  padding: 0;
-}
-
-.fp-ta {
+.fp-note-ta {
+  flex: 1 1 auto;
   width: 100%;
-  min-height: 62px;
-  resize: vertical;
+  min-height: 0;
+  resize: none;
   border: 1px solid var(--fp-hairline);
-  border-radius: 6px;
-  padding: 7px 9px;
+  border-radius: 8px;
+  padding: 6px 8px;
   font-family: var(--fp-font-sans), system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 12.5px;
+  line-height: 1.35;
   background: var(--fp-surface);
   color: var(--fp-ink);
 }
 
-.fp-ta:focus-visible {
+.fp-inp {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--fp-hairline);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: var(--fp-font-sans), system-ui, sans-serif;
+  font-size: 12.5px;
+  background: var(--fp-surface);
+  color: var(--fp-ink);
+}
+
+.fp-note-ta:focus-visible,
+.fp-inp:focus-visible {
   outline: 2px solid var(--fp-free-edge);
   outline-offset: 1px;
 }
 
+.fp-detail-empty {
+  margin: 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--fp-ink-3);
+}
+
 .fp-btnrow {
   display: flex;
-  gap: 7px;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
-  margin-top: 7px;
+}
+
+.fp-note .fp-btn,
+.fp-actbar .fp-btn {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.fp-actbar .fp-kit li {
+  color: var(--fp-act-ink-2);
+}
+
+.fp-actbar .fp-kit i {
+  border-color: var(--fp-act-bg);
+}
+
+.fp-actbar .fp-btn {
+  border-color: var(--fp-act-edge);
+  background: var(--fp-act-surface);
+  color: var(--fp-act-ink-2);
+}
+
+.fp-actbar .fp-btn:hover:not(:disabled) {
+  border-color: var(--fp-act-accent);
+  color: var(--fp-act-accent);
+}
+
+.fp-actbar .fp-btn.is-primary {
+  background: var(--fp-act-accent);
+  border-color: var(--fp-act-accent);
+  color: var(--fp-surface);
+}
+
+.fp-actbar .fp-btn.is-primary:hover:not(:disabled) {
+  color: var(--fp-surface);
+}
+
+.fp-actbar .fp-btn.is-danger {
+  border-color: var(--fp-oos-edge);
+  color: var(--fp-oos-ink);
+}
+
+.fp-actbar .fp-inp {
+  border-color: var(--fp-act-edge);
+  background: var(--fp-act-surface);
+  color: var(--fp-act-ink);
+}
+
+.fp-actbar .fp-inp:focus-visible {
+  outline-color: var(--fp-act-accent);
 }
 
 .fp-btn {
@@ -415,16 +638,6 @@ a.fp-chip {
 .fp-btn.is-danger {
   border-color: var(--fp-oos-edge);
   color: var(--fp-oos-ink);
-}
-
-.fp-h3 {
-  font-family: var(--fp-font-cond), system-ui, sans-serif;
-  font-weight: 600;
-  font-size: 10.5px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--fp-ink-2);
-  padding: 11px 14px 6px;
 }
 
 .fp-grp {
@@ -572,24 +785,9 @@ div.fp-row:hover {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--fp-hairline);
-  font-size: 11.5px;
-  color: var(--fp-ink-2);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-}
-
-.fp-tip-kit b {
-  font-weight: 400;
-  color: var(--fp-oos-edge);
-}
-
-.fp-tip-act {
-  margin-top: 6px;
-  font-family: var(--fp-font-cond), system-ui, sans-serif;
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--fp-free-edge);
+  gap: 3px;
 }
 
 .fp-tip-note {
@@ -664,9 +862,9 @@ div.fp-row:hover {
   gap: 18px;
   flex-wrap: wrap;
   align-items: center;
-  margin-top: 14px;
+  margin-top: 6px;
   border-top: 1px solid var(--fp-hairline);
-  padding-top: 11px;
+  padding-top: 6px;
   font-size: 12px;
   color: var(--fp-ink-2);
 }
@@ -864,11 +1062,6 @@ div.fp-row:hover {
 .fp-seat.is-sel .fp-desk {
   stroke: var(--fp-ink);
   stroke-width: 2.5;
-}
-
-.fp-seat.is-dim {
-  opacity: var(--fp-op-dim);
-  pointer-events: none;
 }
 
 .fp-seat.is-free .fp-desk {

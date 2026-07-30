@@ -160,8 +160,8 @@ after changing `.env.local`.
 | `431 Request Header Fields Too Large` on `ws://.../realtime/v1/websocket` | Frontend is pointed at `localhost:54321`. Use `127.0.0.1:54321` (see the warning above), restart the dev server, and clear old `localhost` cookies. |
 | `Anonymous sign-ins are disabled` when opening a retro invite link | Set `enable_anonymous_sign_ins = true` in `supabase/config.toml` and restart the stack (Option A), or enable it in the dashboard (Option B). |
 | Suddenly logged out after changing `NEXT_PUBLIC_SUPABASE_URL` | Expected. The auth cookie name is derived from the Supabase URL, so changing the host starts a new session. Log in again. |
-| `permission denied for table ...` (`42501`) | Base table grants are missing; ensure `008_grant_base_privileges.sql` has been applied. `npx supabase db reset` fixes it. |
-| `violates check constraint "..._role_check"` (`23514`) | Legacy PascalCase enum values; ensure `009_normalize_enum_casing.sql` has been applied. |
+| `permission denied for table ...` (`42501`) | Base table grants are missing; ensure `009_grant_base_privileges.sql` has been applied. `npx supabase db reset` fixes it. |
+| `violates check constraint "..._role_check"` (`23514`) | Legacy PascalCase enum values; ensure `010_normalize_enum_casing.sql` has been applied. |
 | Docker port conflicts on start | Another Supabase project is running. `npx supabase stop --project-id <other>` or change the ports in `config.toml`. |
 
 
@@ -205,7 +205,7 @@ The map is deliberately **light-only**. It depicts physical materials — concre
 | Components, geometry, tokens, CSS | `frontend/src/components/floor/` |
 | Routes | `frontend/src/app/dashboard/floor/` |
 | API | `backend/Controllers/SeatsController.cs` |
-| Schema | `supabase/migrations/006_seats.sql` |
+| Schema | `supabase/migrations/007_seats.sql` |
 
 Desk positions, pod layout, and seat numbering live in `floorGeometry.ts` and are **not** stored in the database — moving furniture is a code change. The `seats` table holds only per-desk *state* (occupant, assignment, note, service status), joined to the drawing by `seat_number`.
 

@@ -13,10 +13,19 @@ import { FloorMap } from './FloorMap'
 import { FloorStatsBar } from './FloorStatsBar'
 import { FloorToolbar } from './FloorToolbar'
 import { RosterPanel } from './RosterPanel'
-import { SeatDetailPanel } from './SeatDetailPanel'
+import { SeatActionBar } from './SeatActionBar'
+import { SeatNoteBox } from './SeatNoteBox'
 import { floorApi } from './floorApi'
 import { floorCssVars } from './floorTokens'
-import type { ColorBy, KitLayer, Seat, SeatAssignment, SeatMap, ViewMode } from './floorTypes'
+import type {
+  ColorBy,
+  KitLayer,
+  Seat,
+  SeatAssignment,
+  SeatKit,
+  SeatMap,
+  ViewMode,
+} from './floorTypes'
 import { computeStats, isOccupied } from './floorTypes'
 
 interface TeamSummary {
@@ -35,17 +44,14 @@ function errorMessage(error: unknown, fallback: string) {
 
 export function FloorPlanPage() {
   const [seats, setSeats] = useState<Seat[]>([])
-  const [myTeamIds, setMyTeamIds] = useState<string[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
-  const [view, setView] = useState<ViewMode>('roster')
+  const [view, setView] = useState<ViewMode>('plan')
   const [colorBy, setColorBy] = useState<ColorBy>('status')
   const [kitLayer, setKitLayer] = useState<KitLayer>('none')
-  const [query, setQuery] = useState('')
-  const [myTeamsOnly, setMyTeamsOnly] = useState(false)
   const [hoveredSeat, setHoveredSeat] = useState<number | null>(null)
   const [selectedSeat, setSelectedSeat] = useState<number | null>(null)
 
@@ -69,7 +75,6 @@ export function FloorPlanPage() {
 
         const userId = data.user?.id
         setSeats(seatList)
-        setMyTeamIds(teams.map((team) => team.id))
         // Admin-ness is per team and is the only role this app has, so being an
         // admin of any team is what unlocks the floor-wide actions.
         setIsAdmin(
@@ -120,24 +125,6 @@ export function FloorPlanPage() {
     }
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
   }, [seats])
-
-  const isDimmed = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    return (seatNumber: number) => {
-      const seat = seatMap[seatNumber]
-      if (!seat) return false
-      if (needle) {
-        const match =
-          seat.occupantName?.toLowerCase().includes(needle) ||
-          String(seat.seatNumber).includes(needle)
-        if (!match) return true
-      }
-      if (myTeamsOnly && !(seat.occupantTeamId && myTeamIds.includes(seat.occupantTeamId))) {
-        return true
-      }
-      return false
-    }
-  }, [query, myTeamsOnly, myTeamIds, seatMap])
 
   const run = useCallback(
     (action: () => Promise<unknown>, success: string, failure: string) => {
@@ -200,6 +187,16 @@ export function FloorPlanPage() {
     [run],
   )
 
+  const handleToggleEquipment = useCallback(
+    (seat: Seat, kit: SeatKit, present: boolean) =>
+      run(
+        () => floorApi.updateEquipment(seat.id, kit, present),
+        `Seat #${seat.seatNumber}: ${kit} marked as ${present ? 'present' : 'missing'}.`,
+        'Could not update the equipment.',
+      ),
+    [run],
+  )
+
   const handleSeatClick = useCallback(
     (seatNumber: number) => setSelectedSeat((current) => (current === seatNumber ? null : seatNumber)),
     [],
@@ -212,65 +209,75 @@ export function FloorPlanPage() {
       className={`fp-root fp--${view}`}
       style={floorCssVars as React.CSSProperties}
     >
-      <div className="fp-inner">
-        <FloorToolbar
-          view={view}
-          onView={setView}
-          colorBy={colorBy}
-          onColorBy={setColorBy}
-          kitLayer={kitLayer}
-          onKitLayer={setKitLayer}
-          query={query}
-          onQuery={setQuery}
-          myTeamsOnly={myTeamsOnly}
-          onMyTeamsOnly={setMyTeamsOnly}
-          isAdmin={isAdmin}
-          openReports={openReports}
-        />
-
-        <FloorStatsBar stats={stats} />
-
-        {loadError && <p className="fp-alert">{loadError}</p>}
-        {loading && !loadError && <p className="fp-detail-empty">Loading the floor…</p>}
-
-        <div className="fp-stage">
-          <FloorMap
-            seats={seatMap}
+      <div className="fp-scroll">
+        <div className="fp-inner">
+          <FloorToolbar
+            view={view}
+            onView={setView}
             colorBy={colorBy}
+            onColorBy={setColorBy}
             kitLayer={kitLayer}
-            isDimmed={isDimmed}
-            highlightedSeat={hoveredSeat}
-            selectedSeat={selectedSeat}
-            onHoverSeat={setHoveredSeat}
-            onSeatClick={handleSeatClick}
-            onBackgroundClick={() => setSelectedSeat(null)}
+            onKitLayer={setKitLayer}
+            isAdmin={isAdmin}
+            openReports={openReports}
           />
 
-          {view === 'roster' && (
-            <aside className="fp-aside">
-              <SeatDetailPanel
-                key={selected?.id ?? 'none'}
-                seat={selected}
-                isAdmin={isAdmin}
-                busy={pending}
-                onAssign={handleAssign}
-                onRelease={handleRelease}
-                onUnassign={handleUnassign}
-                onSaveNote={handleSaveNote}
-                onReportDefect={handleReportDefect}
-              />
-              <RosterPanel
-                seats={seats}
-                highlightedSeat={hoveredSeat}
-                selectedSeat={selectedSeat}
-                onHoverSeat={setHoveredSeat}
-                onSeatClick={handleSeatClick}
-              />
-            </aside>
-          )}
-        </div>
+          {loadError && <p className="fp-alert">{loadError}</p>}
+          {loading && !loadError && <p className="fp-detail-empty">Loading the floor…</p>}
 
-        <FloorLegend kitLayer={kitLayer} teams={legendTeams} />
+          {view !== 'print' && (
+            <SeatActionBar
+              key={selected?.id ?? 'none'}
+              seat={selected}
+              isAdmin={isAdmin}
+              busy={pending}
+              onAssign={handleAssign}
+              onRelease={handleRelease}
+              onUnassign={handleUnassign}
+              onReportDefect={handleReportDefect}
+              onToggleEquipment={handleToggleEquipment}
+            />
+          )}
+
+          <div className="fp-stage">
+            <FloorMap
+              seats={seatMap}
+              colorBy={colorBy}
+              kitLayer={kitLayer}
+              highlightedSeat={hoveredSeat}
+              selectedSeat={selectedSeat}
+              onHoverSeat={setHoveredSeat}
+              onSeatClick={handleSeatClick}
+              onBackgroundClick={() => setSelectedSeat(null)}
+              panel={
+                view === 'print' ? null : (
+                  <SeatNoteBox
+                    key={selected?.id ?? 'none'}
+                    seat={selected}
+                    busy={pending}
+                    onSave={handleSaveNote}
+                  />
+                )
+              }
+            />
+
+            {view === 'roster' && (
+              <aside className="fp-aside">
+                <RosterPanel
+                  seats={seats}
+                  highlightedSeat={hoveredSeat}
+                  selectedSeat={selectedSeat}
+                  onHoverSeat={setHoveredSeat}
+                  onSeatClick={handleSeatClick}
+                />
+              </aside>
+            )}
+          </div>
+
+          <FloorLegend kitLayer={kitLayer} teams={legendTeams} />
+
+          <FloorStatsBar stats={stats} />
+        </div>
       </div>
     </div>
   )

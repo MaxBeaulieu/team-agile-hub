@@ -57,7 +57,6 @@ export interface SeatProps {
   y: number
   colorBy: ColorBy
   kitLayer: KitLayer
-  dimmed: boolean
   selected: boolean
   onPointerMove: (event: MouseEvent, seatId: number) => void
   onPointerEnter: (event: MouseEvent, seatId: number) => void
@@ -72,7 +71,6 @@ export function Seat({
   y,
   colorBy,
   kitLayer,
-  dimmed,
   selected,
   onPointerMove,
   onPointerEnter,
@@ -101,7 +99,6 @@ export function Seat({
         'fp-seat',
         `is-${visual}`,
         seat.isMine ? 'is-mine' : '',
-        dimmed ? 'is-dim' : '',
         selected ? 'is-sel' : '',
       ]
         .filter(Boolean)
@@ -195,7 +192,6 @@ export interface SeatLayer
     'colorBy' | 'kitLayer' | 'onPointerMove' | 'onPointerEnter' | 'onPointerLeave' | 'onSelect'
   > {
   seats: Record<number, SeatModel>
-  isDimmed: (seatId: number) => boolean
   isSelected: (seatId: number) => boolean
 }
 
@@ -209,7 +205,6 @@ export function LayerSeat({ layer, id, x, y }: { layer: SeatLayer; id: number; x
       y={y}
       colorBy={layer.colorBy}
       kitLayer={layer.kitLayer}
-      dimmed={layer.isDimmed(id)}
       selected={layer.isSelected(id)}
       onPointerMove={layer.onPointerMove}
       onPointerEnter={layer.onPointerEnter}
