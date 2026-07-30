@@ -221,10 +221,12 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         if (report is null) return NotFound();
         if (report.Status == SeatDefectStatus.Closed) return Conflict("This report is already closed.");
 
+        var resolution = req.ResolutionNote?.Trim();
+        if (resolution?.Length > MaxReasonLength)
+            return BadRequest($"Resolution note must be {MaxReasonLength} characters or fewer.");
+
         report.Status = SeatDefectStatus.Closed;
-        report.ResolutionNote = string.IsNullOrWhiteSpace(req.ResolutionNote)
-            ? null
-            : req.ResolutionNote.Trim();
+        report.ResolutionNote = string.IsNullOrEmpty(resolution) ? null : resolution;
         report.ClosedBy = CurrentUserId;
         report.ClosedAt = DateTime.UtcNow;
 
