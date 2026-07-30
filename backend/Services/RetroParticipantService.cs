@@ -146,7 +146,8 @@ public class RetroParticipantService(SupabaseService sb)
             existing.DisplayName = overrideName;
             changed = true;
         }
-        else if (string.IsNullOrEmpty(overrideName) && NeedsNameRefresh(existing))
+        else if (string.IsNullOrEmpty(overrideName)
+                 && (NeedsNameRefresh(existing) || !IsAnonymous(user)))
         {
             var resolved = await ResolveDisplayNameAsync(user, await GetTeamIdForSessionAsync(session));
             if (existing.DisplayName != resolved)
