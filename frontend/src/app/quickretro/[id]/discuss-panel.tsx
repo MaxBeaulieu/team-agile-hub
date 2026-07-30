@@ -4,13 +4,20 @@ import { useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { groupVotesByCardId } from "@/lib/retro-groups";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronRight, Circle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Circle,
+  ListChecks,
+  Plus,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { RetroSession, RetroCard } from "./page";
+import type { RetroSession, RetroCard, ActionItemData } from "./page";
 
 type Props = {
   session: RetroSession;
   cards: RetroCard[];
+  actionItems: ActionItemData[];
   isFacilitator: boolean;
   onRefresh: () => void;
 };
@@ -64,12 +71,119 @@ function NotesEditor({
   );
 }
 
+// Action items already saved against a card — kept visible so they don't
+// vanish the moment they're created (EE-160).
+export function CardActionItems({
+  items,
+  className,
+}: Readonly<{
+  items: ActionItemData[];
+  className?: string;
+}>) {
+  if (items.length === 0) return null;
+
+  return (
+    <ul className={["space-y-1", className].filter(Boolean).join(" ")}>
+      {items.map((item) => (
+        <li
+          key={item.id}
+          className="flex items-start gap-1.5 rounded-md bg-muted/60 px-2 py-1 text-[11px] leading-snug"
+        >
+          <ListChecks className="size-3 shrink-0 mt-0.5 text-primary" />
+          <span className="break-words min-w-0">{item.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Action item creator attached to a specific card
+function ActionItemCreator({
+  card,
+  session,
+  onRefresh,
+}: Readonly<{
+  card: RetroCard;
+  session: RetroSession;
+  onRefresh: () => void;
+}>) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function create() {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    try {
+      await api.post(`/api/quickretro/${session.id}/action-items`, {
+        text: trimmed,
+        retroCardId: card.id,
+      });
+      setText("");
+      setOpen(false);
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create action item",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary transition-colors"
+      >
+        <Plus className="size-3" /> Add action item
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background p-2.5">
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") create();
+        }}
+        placeholder="Action item text…"
+        autoFocus
+        className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+      />
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          className="h-6 px-2 text-xs"
+          onClick={create}
+          disabled={saving || !text.trim()}
+        >
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          onClick={() => setOpen(false)}
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // A highlighted discussion card (the "spotlight" card)
 function DiscussionCard({
   card,
   isActive,
   isFacilitator,
   session,
+  cardActionItems,
   totalVotes,
   onRefresh,
   onSetActive,
@@ -78,6 +192,7 @@ function DiscussionCard({
   isActive: boolean;
   isFacilitator: boolean;
   session: RetroSession;
+  cardActionItems: ActionItemData[];
   totalVotes: number;
   onRefresh: () => void;
   onSetActive: (cardId: string) => void;
@@ -147,9 +262,24 @@ function DiscussionCard({
           </div>
         )}
 
+        {/* Saved notes stay readable once the card is no longer the spotlight */}
+        {!isActive && card.discussionNotes?.trim() && (
+          <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+            {card.discussionNotes}
+          </p>
+        )}
+
+        {/* Action items saved on this card */}
+        <CardActionItems items={cardActionItems} className="pt-1" />
+
         {/* Controls */}
         {isActive && (
           <div className="space-y-2 pt-1">
+            <ActionItemCreator
+              card={card}
+              session={session}
+              onRefresh={onRefresh}
+            />
             {isFacilitator && !card.isDiscussed && (
               <Button
                 size="sm"
@@ -182,6 +312,7 @@ function DiscussionCard({
 export function DiscussPanel({
   session,
   cards,
+  actionItems,
   isFacilitator,
   onRefresh,
 }: Props) {
@@ -219,6 +350,18 @@ export function DiscussPanel({
   const discussedCount = cards.filter((c) => c.isDiscussed).length;
   const totalCards = cards.length;
 
+  const itemsByCard = actionItems.reduce<Record<string, ActionItemData[]>>(
+    (acc, item) => {
+      if (item.retroCardId) {
+        const bucket = acc[item.retroCardId] ?? [];
+        bucket.push(item);
+        acc[item.retroCardId] = bucket;
+      }
+      return acc;
+    },
+    {},
+  );
+
   return (
     <div className="p-6 space-y-4 max-w-2xl mx-auto w-full">
       {/* Header */}
@@ -254,6 +397,7 @@ export function DiscussPanel({
             isActive={card.id === session.activeDiscussionCardId}
             isFacilitator={isFacilitator}
             session={session}
+            cardActionItems={itemsByCard[card.id] ?? []}
             totalVotes={groupVotes[card.id] ?? 0}
             onRefresh={onRefresh}
             onSetActive={setActiveCard}
