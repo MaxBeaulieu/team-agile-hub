@@ -113,41 +113,14 @@ export function WrapUpPanel({
     }
   }
 
-  const discussedCards = cards.filter((c) => c.isDiscussed);
-  const totalCards = cards.length;
-
-  // Notes + action items grouped per card, so the summary is a full record of
-  // what was said and what was decided (EE-160).
-  const itemsByCard = actionItems.reduce<Record<string, ActionItemData[]>>(
-    (acc, item) => {
-      if (item.retroCardId) {
-        const bucket = acc[item.retroCardId] ?? [];
-        bucket.push(item);
-        acc[item.retroCardId] = bucket;
-      }
-      return acc;
-    },
-    {},
-  );
-
-  const outcomeCards = cards
-    .map((card) => ({
-      card,
-      notes: card.discussionNotes?.trim() ?? "",
-      items: itemsByCard[card.id] ?? [],
-    }))
-    .filter((o) => o.notes.length > 0 || o.items.length > 0);
-
-  const cardIds = new Set(cards.map((c) => c.id));
-  const unlinkedItems = actionItems.filter(
-    (i) => !i.retroCardId || !cardIds.has(i.retroCardId),
-  );
-
   // Entry vs exit mood comparison
   const exitCheckedCount = moodCheckins.filter(
     (m) => m.exitMood !== null,
   ).length;
   const totalMembers = teamMembers.length;
+
+  // Once the retro is completed this panel is a read-only recap — no more input.
+  const isCompleted = session.phase === "Completed";
 
   return (
     <div className="flex flex-col gap-8 p-8 max-w-xl mx-auto w-full">
@@ -155,42 +128,46 @@ export function WrapUpPanel({
       <div className="text-center space-y-1">
         <h2 className="text-xl font-semibold">Wrap-Up</h2>
         <p className="text-sm text-muted-foreground">
-          Submit your exit mood and review the session summary.
+          {isCompleted
+            ? "Session summary."
+            : "Submit your exit mood and review the session summary."}
         </p>
       </div>
 
       {/* Exit mood picker */}
-      <div className="space-y-3">
-        <p className="text-sm font-medium text-center">
-          How are you feeling after this retro?
-        </p>
-        <div className="flex justify-center gap-3">
-          {MOODS.map((m) => (
-            <button
-              key={m.value}
-              onClick={() => pickExitMood(m.value)}
-              disabled={saving}
-              title={m.label}
-              className={[
-                "flex flex-col items-center gap-1.5 rounded-2xl px-3 py-2 text-2xl",
-                "border-2 transition-all hover:scale-110 active:scale-100",
-                myExitMood === m.value
-                  ? "border-primary bg-primary/10 scale-110 shadow-md"
-                  : "border-border hover:border-primary/40 bg-card",
-                saving ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
-              ].join(" ")}
-            >
-              {m.emoji}
-              <span className="text-[10px] text-muted-foreground font-medium">
-                {m.label}
-              </span>
-            </button>
-          ))}
+      {!isCompleted && (
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-center">
+            How are you feeling after this retro?
+          </p>
+          <div className="flex justify-center gap-3">
+            {MOODS.map((m) => (
+              <button
+                key={m.value}
+                onClick={() => pickExitMood(m.value)}
+                disabled={saving}
+                title={m.label}
+                className={[
+                  "flex flex-col items-center gap-1.5 rounded-2xl px-3 py-2 text-2xl",
+                  "border-2 transition-all hover:scale-110 active:scale-100",
+                  myExitMood === m.value
+                    ? "border-primary bg-primary/10 scale-110 shadow-md"
+                    : "border-border hover:border-primary/40 bg-card",
+                  saving ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+              >
+                {m.emoji}
+                <span className="text-[10px] text-muted-foreground font-medium">
+                  {m.label}
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground text-center tabular-nums">
+            {exitCheckedCount}/{totalMembers} submitted exit mood
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground text-center tabular-nums">
-          {exitCheckedCount}/{totalMembers} submitted exit mood
-        </p>
-      </div>
+      )}
 
       {/* Mood comparison */}
       <div className="grid grid-cols-2 gap-6 rounded-xl border border-border bg-card p-4">
@@ -198,59 +175,13 @@ export function WrapUpPanel({
         <MoodSummary moodCheckins={moodCheckins} label="exit" />
       </div>
 
-      {/* Session summary */}
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <p className="text-sm font-semibold">Session Summary</p>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-lg bg-muted p-3">
-            <p className="text-2xl font-bold">{totalCards}</p>
-            <p className="text-[11px] text-muted-foreground">Cards written</p>
-          </div>
-          <div className="rounded-lg bg-muted p-3">
-            <p className="text-2xl font-bold">{discussedCards.length}</p>
-            <p className="text-[11px] text-muted-foreground">Discussed</p>
-          </div>
-          <div className="rounded-lg bg-muted p-3">
-            <p className="text-2xl font-bold">{totalMembers}</p>
-            <p className="text-[11px] text-muted-foreground">Participants</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Discussion notes per card */}
-      {(outcomeCards.length > 0 || unlinkedItems.length > 0) && (
+      {/* Action items */}
+      {actionItems.length > 0 && (
         <div className="space-y-2">
-          <p className="text-sm font-semibold">Notes &amp; Action Items</p>
-          {outcomeCards.map(({ card, notes, items }) => (
-            <div
-              key={card.id}
-              className="space-y-2 rounded-lg border border-border bg-card px-3 py-2.5"
-            >
-              <div>
-                <p className="text-xs text-muted-foreground font-medium">
-                  {card.column}
-                </p>
-                <p className="text-sm leading-snug whitespace-pre-wrap break-words">
-                  {card.content}
-                </p>
-              </div>
-              {notes && (
-                <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
-                  {notes}
-                </p>
-              )}
-              <CardActionItems items={items} />
-            </div>
-          ))}
-
-          {unlinkedItems.length > 0 && (
-            <div className="space-y-2 rounded-lg border border-border bg-card px-3 py-2.5">
-              <p className="text-xs text-muted-foreground font-medium">
-                Other action items
-              </p>
-              <CardActionItems items={unlinkedItems} />
-            </div>
-          )}
+          <p className="text-sm font-semibold">Action Items</p>
+          <div className="rounded-lg border border-border bg-card px-3 py-2.5">
+            <CardActionItems items={actionItems} />
+          </div>
         </div>
       )}
 
@@ -267,6 +198,7 @@ export function WrapUpPanel({
             .slice(0, 5)
             .map((card) => {
               const votes = card.retro_votes.reduce((s, v) => s + v.count, 0);
+              const notes = card.discussionNotes?.trim();
               return (
                 <div
                   key={card.id}
@@ -282,11 +214,18 @@ export function WrapUpPanel({
                       {votes > 0 ? `${votes}🔥` : "—"}
                     </span>
                   </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground font-medium">
+                  <div className="min-w-0 space-y-1.5">
+                    <p className="text-[11px] text-muted-foreground font-medium">
                       {card.column}
                     </p>
-                    <p className="text-sm leading-snug">{card.content}</p>
+                    <p className="text-xs leading-snug whitespace-pre-wrap break-words">
+                      {card.content}
+                    </p>
+                    {notes && (
+                      <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+                        {notes}
+                      </p>
+                    )}
                   </div>
                 </div>
               );
@@ -295,7 +234,7 @@ export function WrapUpPanel({
       )}
 
       {/* Facilitator: complete session */}
-      {isFacilitator && (
+      {isFacilitator && !isCompleted && (
         <p className="text-xs text-muted-foreground text-center">
           Use the <strong>Complete Retro</strong> button in the header to finish
           the session.
