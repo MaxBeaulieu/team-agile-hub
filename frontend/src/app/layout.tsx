@@ -7,7 +7,7 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-  title: 'PR Patrol Command Center',
+  title: 'Command Center',
   description: 'Sprint retros, poker planning, and sprint planning for your team',
 }
 
