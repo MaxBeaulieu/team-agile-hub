@@ -42,6 +42,8 @@ export type RetroExportInput = {
   moodCheckins: ExportMoodCheckin[]
   teamMembers: ExportMember[]
   actionItems: ExportActionItem[]
+  /** Everyone who took part, listed at the top of the recap (EE-162). */
+  participants?: ExportMember[]
 }
 
 /** Escapes the characters that would otherwise break inline Markdown. */
@@ -76,7 +78,7 @@ function moodSection(moodCheckins: ExportMoodCheckin[], key: 'entryMood' | 'exit
 }
 
 export function buildRetroMarkdown({
-  title, cards, moodCheckins, teamMembers, actionItems,
+  title, cards, moodCheckins, teamMembers, actionItems, participants,
 }: RetroExportInput): string {
   const nameByUserId = new Map(teamMembers.map(m => [m.userId, m.displayName]))
   const cardById     = new Map(cards.map(c => [c.id, c]))
@@ -87,6 +89,18 @@ export function buildRetroMarkdown({
     '',
     `_Exported ${new Date().toLocaleString()}_`,
     '',
+  ]
+
+  if (participants?.length) {
+    lines.push(
+      '## Participants',
+      '',
+      ...participants.map(p => `- ${escapeInline(p.displayName)}`),
+      '',
+    )
+  }
+
+  lines.push(
     '## Mood',
     '',
     ...moodSection(moodCheckins, 'entryMood'),
@@ -94,7 +108,7 @@ export function buildRetroMarkdown({
     '',
     '## Action Items',
     '',
-  ]
+  )
 
   if (actionItems.length === 0) {
     lines.push('_No action items recorded._', '')

@@ -44,6 +44,7 @@ export type RetroSession = {
   columnsJson: string;
   voteCount: number;
   hideVotesUntilRevealed: boolean;
+  skipMoodCheckins: boolean;
   currentSpeakerId: string | null;
   speakerOrderJson: string | null;
   icebreakerQuestion: string | null;
@@ -135,11 +136,21 @@ const PHASE_LABELS: Record<RetroPhase, string> = {
   Completed: "Completed",
 };
 
-function PhaseProgressBar({ phase }: { phase: RetroPhase }) {
-  const current = PHASE_ORDER.indexOf(phase);
+function PhaseProgressBar({ session }: { session: RetroSession }) {
+  // Check-In only exists to collect entry moods, so it disappears from the
+  // progress bar when the retro opted out of them (EE-165).
+  const phases = PHASE_ORDER.filter(
+    (p) =>
+      p !== "Completed" && !(p === "CheckIn" && session.skipMoodCheckins),
+  );
+  const current =
+    session.phase === "Completed"
+      ? phases.length
+      : phases.indexOf(session.phase);
+
   return (
     <div className="flex items-center gap-1">
-      {PHASE_ORDER.filter((p) => p !== "Completed").map((p, i) => {
+      {phases.map((p, i) => {
         const done = i < current;
         const active = i === current;
         return (
@@ -154,14 +165,12 @@ function PhaseProgressBar({ phase }: { phase: RetroPhase }) {
                     : "w-6 bg-muted",
               ].join(" ")}
             />
-            {i < PHASE_ORDER.filter((p) => p !== "Completed").length - 1 && (
-              <div className="h-px w-2 bg-border" />
-            )}
+            {i < phases.length - 1 && <div className="h-px w-2 bg-border" />}
           </div>
         );
       })}
       <span className="ml-2 text-xs text-muted-foreground font-medium">
-        {PHASE_LABELS[phase]}
+        {PHASE_LABELS[session.phase]}
       </span>
     </div>
   );
@@ -294,7 +303,7 @@ function RetroHeader({
         )}
         <div>
           <h1 className="text-sm font-semibold">{retroName} — Retro</h1>
-          <PhaseProgressBar phase={session.phase} />
+          <PhaseProgressBar session={session} />
         </div>
       </div>
     </div>
@@ -484,6 +493,7 @@ function RetroInner({ retroId }: { retroId: string }) {
     teamMembers,
     actionItems: actionItems ?? [],
     roster,
+    participants,
     currentUserId,
     isFacilitator,
     onRefresh: load,
