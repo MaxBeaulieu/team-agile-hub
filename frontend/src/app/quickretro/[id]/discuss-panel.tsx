@@ -146,6 +146,13 @@ function DiscussionCard({
           </div>
         )}
 
+        {/* Saved notes stay readable once the card is no longer the spotlight */}
+        {!isActive && card.discussionNotes?.trim() && (
+          <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+            {card.discussionNotes}
+          </p>
+        )}
+
         {/* Controls */}
         {isActive && (
           <div className="space-y-2 pt-1">

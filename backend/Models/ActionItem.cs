@@ -55,4 +55,9 @@ public class ActionItem : BaseModel
 
     [Column("talking_point_id")]
     public Guid? TalkingPointId { get; set; }
+
+    // Set when the item was created from a retro card during the Discuss phase,
+    // so the UI can show it on that card and group it in the wrap-up summary.
+    [Column("retro_card_id")]
+    public Guid? RetroCardId { get; set; }
 }

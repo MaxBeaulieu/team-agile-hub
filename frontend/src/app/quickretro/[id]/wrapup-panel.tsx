@@ -114,6 +114,11 @@ export function WrapUpPanel({
   const discussedCards = cards.filter((c) => c.isDiscussed);
   const totalCards = cards.length;
 
+  // Cards that captured discussion notes, listed in the summary (EE-160).
+  const notedCards = cards
+    .map((card) => ({ card, notes: card.discussionNotes?.trim() ?? "" }))
+    .filter((n) => n.notes.length > 0);
+
   // Entry vs exit mood comparison
   const exitCheckedCount = moodCheckins.filter(
     (m) => m.exitMood !== null,
@@ -187,6 +192,31 @@ export function WrapUpPanel({
           </div>
         </div>
       </div>
+
+      {/* Discussion notes per card */}
+      {notedCards.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold">Discussion Notes</p>
+          {notedCards.map(({ card, notes }) => (
+            <div
+              key={card.id}
+              className="space-y-2 rounded-lg border border-border bg-card px-3 py-2.5"
+            >
+              <div>
+                <p className="text-xs text-muted-foreground font-medium">
+                  {card.column}
+                </p>
+                <p className="text-sm leading-snug whitespace-pre-wrap break-words">
+                  {card.content}
+                </p>
+              </div>
+              <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+                {notes}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Top voted cards */}
       {cards.length > 0 && (

@@ -89,6 +89,7 @@ export type ActionItemData = {
   dueDate: string | null
   status: string
   createdAt: string
+  retroCardId: string | null
 }
 
 export type RetroData = {
@@ -97,6 +98,7 @@ export type RetroData = {
   hiddenCounts: Record<string, number>
   moodCheckins: MoodCheckin[]
   teamMembers: TeamMemberData[]
+  actionItems: ActionItemData[]
   sprintName: string
 }
 
@@ -444,6 +446,9 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
         event: '*', schema: 'public', table: 'mood_checkins',
         filter: `retro_session_id=eq.${sessionId}`,
       }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'action_items',
+      }, scheduleRefresh)
       .subscribe()
 
     return () => {
@@ -480,7 +485,7 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
     )
   }
 
-  const { session, cards, hiddenCounts, moodCheckins, teamMembers, sprintName } = data
+  const { session, cards, hiddenCounts, moodCheckins, teamMembers, actionItems, sprintName } = data
   const isFacilitator = session.facilitatorId === currentUserId
 
   // Counts for facilitator bar
@@ -491,6 +496,7 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
 
   const panelProps = {
     session, cards, hiddenCounts, moodCheckins, teamMembers,
+    actionItems: actionItems ?? [],
     currentUserId, teamId, isFacilitator, onRefresh: load,
   }
 

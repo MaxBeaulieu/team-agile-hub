@@ -173,6 +173,14 @@ public class RetroController(SupabaseService sb) : ControllerBase
             .Filter("id", Operator.Equals, teamId.ToString())
             .Get()).Models.FirstOrDefault()?.Members ?? new();
 
+        // Retro action items for this sprint — the Discuss panel renders them on
+        // the card they came from and the wrap-up lists them per card (EE-160).
+        var actionItems = (await sb.Db.From<ActionItem>()
+            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
+            .Filter("type",      Operator.Equals, "retro")
+            .Order("created_at", Ordering.Ascending)
+            .Get()).Models;
+
         return Ok(new
         {
             Session      = session,
@@ -180,6 +188,7 @@ public class RetroController(SupabaseService sb) : ControllerBase
             HiddenCounts = hiddenCounts,
             MoodCheckins = moodCheckins,
             TeamMembers  = teamMembers,
+            ActionItems  = actionItems,
             SprintName   = sprint.Name,
         });
     }
@@ -534,14 +543,27 @@ public class RetroController(SupabaseService sb) : ControllerBase
         if (!session.SprintId.HasValue)
             return BadRequest("Retro session is not attached to a sprint.");
 
+        // Only accept a card that actually belongs to this session.
+        Guid? retroCardId = null;
+        if (req.RetroCardId.HasValue)
+        {
+            var card = (await sb.Db.From<RetroCard>()
+                .Filter("id",               Operator.Equals, req.RetroCardId.Value.ToString())
+                .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
+                .Get()).Models.FirstOrDefault();
+            if (card is null) return BadRequest("Card does not belong to this retro session.");
+            retroCardId = card.Id;
+        }
+
         var item = new ActionItem
         {
-            SprintId   = session.SprintId.Value,
-            Type       = ActionItemType.Retro,
-            AssigneeId = req.AssigneeId,
-            Text       = req.Text.Trim(),
-            DueDate    = req.DueDate,
-            Status     = ActionItemStatus.Open,
+            SprintId    = session.SprintId.Value,
+            Type        = ActionItemType.Retro,
+            AssigneeId  = req.AssigneeId,
+            Text        = req.Text.Trim(),
+            DueDate     = req.DueDate,
+            Status      = ActionItemStatus.Open,
+            RetroCardId = retroCardId,
         };
 
         var inserted = (await sb.Db.From<ActionItem>().Insert(item)).Models.First();
@@ -580,4 +602,8 @@ public record AdvanceSpeakerRequest(Guid? SpeakerId);
 
 public record SetDiscussRequest(Guid? CardId);
 
-public record CreateRetroActionItemRequest(string Text, Guid? AssigneeId, DateTime? DueDate);
+public record CreateRetroActionItemRequest(
+    string    Text,
+    Guid?     AssigneeId,
+    DateTime? DueDate,
+    Guid?     RetroCardId);
