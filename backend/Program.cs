@@ -30,6 +30,7 @@ builder.Services.AddCors(options =>
 // Supabase client (replaces EF Core + Npgsql)
 builder.Services.AddSingleton<SupabaseService>();
 builder.Services.AddSingleton<JiraEncryptionService>();
+builder.Services.AddSingleton<RetroParticipantService>();
 
 // Controllers � use Newtonsoft so supabase-csharp models serialize cleanly
 builder.Services.AddControllers().AddNewtonsoftJson(options =>

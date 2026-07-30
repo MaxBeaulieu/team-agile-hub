@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, Plus } from 'lucide-react'
@@ -18,7 +18,9 @@ import { GroupPanel } from './group-panel'
 import { VotePanel } from './vote-panel'
 import { DiscussPanel } from './discuss-panel'
 import { WrapUpPanel } from './wrapup-panel'
-import { ParticipantsBar } from './participants-panel'
+import { ParticipantsBar } from '@/components/retro/participants-bar'
+import { useRetroRoster } from '@/components/retro/use-retro-roster'
+import type { RetroParticipantData } from '@/components/retro/types'
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -99,6 +101,7 @@ export type RetroData = {
   moodCheckins: MoodCheckin[]
   teamMembers: TeamMemberData[]
   actionItems: ActionItemData[]
+  participants: RetroParticipantData[]
   sprintName: string
 }
 
@@ -449,6 +452,10 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'action_items',
       }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'retro_participants',
+        filter: `retro_session_id=eq.${sessionId}`,
+      }, scheduleRefresh)
       .subscribe()
 
     return () => {
@@ -456,6 +463,11 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
       supabase.removeChannel(channel)
     }
   }, [data?.session.id, load])
+
+  // Roster = everyone who joined this retro *and* currently has it open.
+  // Hooks must run before the early returns below.
+  const participants = useMemo(() => data?.participants ?? [], [data])
+  const roster = useRetroRoster(data?.session.id ?? null, participants, currentUserId)
 
   if (loading) {
     return (
@@ -488,14 +500,20 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
   const { session, cards, hiddenCounts, moodCheckins, teamMembers, actionItems, sprintName } = data
   const isFacilitator = session.facilitatorId === currentUserId
 
-  // Counts for facilitator bar
-  const checkedInCount = new Set(moodCheckins.filter(m => m.entryMood !== null).map(m => m.userId)).size
-  const votedMembers   = new Set(
-    cards.flatMap(c => c.retro_votes.map(v => v.userId))
+  // Progress is measured against the people actually in the retro right now,
+  // so invite-link guests count and absent team members don't.
+  const rosterUserIds = new Set(roster.map(m => m.userId))
+  const checkedInCount = new Set(
+    moodCheckins
+      .filter(m => m.entryMood !== null && rosterUserIds.has(m.userId))
+      .map(m => m.userId)
+  ).size
+  const votedMembers = new Set(
+    cards.flatMap(c => c.retro_votes.map(v => v.userId)).filter(id => rosterUserIds.has(id))
   ).size
 
   const panelProps = {
-    session, cards, hiddenCounts, moodCheckins, teamMembers,
+    session, cards, hiddenCounts, moodCheckins, teamMembers, roster,
     actionItems: actionItems ?? [],
     sprintName,
     currentUserId, teamId, isFacilitator, onRefresh: load,
@@ -505,14 +523,19 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
     <div className="flex flex-1 flex-col overflow-hidden">
       <RetroHeader sprintName={sprintName} session={session} />
 
-      <ParticipantsBar sessionId={session.id} isHost={isFacilitator} />
+      <ParticipantsBar
+        sessionId={session.id}
+        roster={roster}
+        isHost={isFacilitator}
+        onRosterChange={load}
+      />
 
       {isFacilitator && (
         <FacilitatorBar
           session={session}
           teamId={teamId}
           checkedInCount={checkedInCount}
-          totalMembers={teamMembers.length}
+          totalMembers={roster.length}
           votedCount={votedMembers}
           onRefresh={load}
         />

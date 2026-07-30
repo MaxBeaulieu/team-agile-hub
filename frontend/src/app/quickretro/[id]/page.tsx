@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
@@ -22,6 +22,9 @@ import { GroupPanel } from "./group-panel";
 import { VotePanel } from "./vote-panel";
 import { DiscussPanel } from "./discuss-panel";
 import { WrapUpPanel } from "./wrapup-panel";
+import { ParticipantsBar } from "@/components/retro/participants-bar";
+import { useRetroRoster } from "@/components/retro/use-retro-roster";
+import type { RetroParticipantData } from "@/components/retro/types";
 
 export type RetroPhase =
   | "CheckIn"
@@ -106,6 +109,7 @@ export type RetroData = {
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
+  participants: RetroParticipantData[];
   retroName: string;
 };
 
@@ -271,19 +275,23 @@ function FacilitatorBar({
 function RetroHeader({
   retroName,
   session,
+  showBackLink,
 }: {
   retroName: string;
   session: RetroSession;
+  showBackLink: boolean;
 }) {
   return (
     <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
       <div className="flex items-center gap-3">
-        <Link
-          href="/quickretro"
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="size-4" />
-        </Link>
+        {showBackLink && (
+          <Link
+            href="/quickretro"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+        )}
         <div>
           <h1 className="text-sm font-semibold">{retroName} — Retro</h1>
           <PhaseProgressBar phase={session.phase} />
@@ -389,6 +397,16 @@ function RetroInner({ retroId }: { retroId: string }) {
         },
         scheduleRefresh,
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "retro_participants",
+          filter: `retro_session_id=eq.${sessionId}`,
+        },
+        scheduleRefresh,
+      )
       .subscribe();
 
     return () => {
@@ -396,6 +414,15 @@ function RetroInner({ retroId }: { retroId: string }) {
       supabase.removeChannel(channel);
     };
   }, [data?.session.id, load, supabase]);
+
+  // Roster = everyone who joined this retro *and* currently has it open.
+  // Hooks must run before the early returns below.
+  const participants = useMemo(() => data?.participants ?? [], [data]);
+  const roster = useRetroRoster(
+    data?.session.id ?? null,
+    participants,
+    currentUserId,
+  );
 
   if (loading) {
     return (
@@ -435,11 +462,18 @@ function RetroInner({ retroId }: { retroId: string }) {
   } = data;
   const isFacilitator = session.facilitatorId === currentUserId;
 
+  // Progress is measured against the people actually in the retro right now,
+  // so invite-link guests count too.
+  const rosterUserIds = new Set(roster.map((m) => m.userId));
   const checkedInCount = new Set(
-    moodCheckins.filter((m) => m.entryMood !== null).map((m) => m.userId),
+    moodCheckins
+      .filter((m) => m.entryMood !== null && rosterUserIds.has(m.userId))
+      .map((m) => m.userId),
   ).size;
   const votedMembers = new Set(
-    cards.flatMap((c) => c.retro_votes.map((v) => v.userId)),
+    cards
+      .flatMap((c) => c.retro_votes.map((v) => v.userId))
+      .filter((id) => rosterUserIds.has(id)),
   ).size;
 
   const panelProps = {
@@ -449,6 +483,7 @@ function RetroInner({ retroId }: { retroId: string }) {
     moodCheckins,
     teamMembers,
     actionItems: actionItems ?? [],
+    roster,
     currentUserId,
     isFacilitator,
     onRefresh: load,
@@ -456,13 +491,24 @@ function RetroInner({ retroId }: { retroId: string }) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <RetroHeader retroName={retroName} session={session} />
+      <RetroHeader
+        retroName={retroName}
+        session={session}
+        showBackLink={isFacilitator}
+      />
+
+      <ParticipantsBar
+        sessionId={session.id}
+        roster={roster}
+        isHost={isFacilitator}
+        onRosterChange={load}
+      />
 
       {isFacilitator && (
         <FacilitatorBar
           session={session}
           checkedInCount={checkedInCount}
-          totalMembers={teamMembers.length}
+          totalMembers={roster.length}
           votedCount={votedMembers}
           onRefresh={load}
         />

@@ -19,6 +19,7 @@ import type {
   TeamMemberData,
   ActionItemData,
 } from "./page";
+import type { RosterMember } from "@/components/retro/types";
 
 const MOODS = [
   { value: 1, emoji: "😔", label: "Not great" },
@@ -34,6 +35,7 @@ type Props = {
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
+  roster: RosterMember[];
   currentUserId: string;
   isFacilitator: boolean;
   onRefresh: () => void;
@@ -104,6 +106,7 @@ export function WrapUpPanel({
   moodCheckins,
   teamMembers,
   actionItems,
+  roster,
   currentUserId,
   isFacilitator,
   onRefresh,
@@ -127,11 +130,12 @@ export function WrapUpPanel({
     }
   }
 
-  // Entry vs exit mood comparison
+  // Entry vs exit mood comparison — measured against who's actually here.
+  const rosterUserIds = new Set(roster.map((m) => m.userId));
   const exitCheckedCount = moodCheckins.filter(
-    (m) => m.exitMood !== null,
+    (m) => m.exitMood !== null && rosterUserIds.has(m.userId),
   ).length;
-  const totalMembers = teamMembers.length;
+  const totalMembers = roster.length;
 
   // Action items grouped by the card they came from, so a card with several
   // items reads as one row instead of repeating the card (EE-160).
