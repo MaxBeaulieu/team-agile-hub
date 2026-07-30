@@ -32,6 +32,20 @@ public class RetroController(SupabaseService sb) : ControllerBase
         return r.Models.Any();
     }
 
+    // Team members can always act. Invite-link joiners (anonymous or logged-in
+    // guests who aren't on the team) can act if they've joined this specific
+    // retro session via the invite link. EE-156.
+    private async Task<bool> IsMemberOrParticipant(Guid teamId, Guid sessionId)
+    {
+        if (await IsMember(teamId)) return true;
+
+        var r = await sb.Db.From<RetroParticipant>()
+            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
+            .Filter("user_id",          Operator.Equals, CurrentUserId.ToString())
+            .Get();
+        return r.Models.Any();
+    }
+
     // Verify sprint belongs to team, then load retro session for that sprint.
     private async Task<(Sprint? sprint, RetroSession? session)> GetSprintAndSession(Guid teamId, Guid sprintId)
     {
@@ -113,11 +127,11 @@ public class RetroController(SupabaseService sb) : ControllerBase
     [HttpGet("api/teams/{teamId:guid}/sprints/{sprintId:guid}/retro")]
     public async Task<IActionResult> GetRetro(Guid teamId, Guid sprintId)
     {
-        if (!await IsMember(teamId)) return Forbid();
-
         var (sprint, session) = await GetSprintAndSession(teamId, sprintId);
         if (sprint is null) return NotFound("Sprint not found.");
         if (session is null) return NotFound("No retro session exists for this sprint.");
+
+        if (!await IsMemberOrParticipant(teamId, session.Id)) return Forbid();
 
         var userId = CurrentUserId;
 
@@ -248,9 +262,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> AddCard(
         Guid teamId, Guid id, [FromBody] AddCardRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
         if (session.Phase != RetroPhase.Write) return BadRequest("Cards can only be added during the Write phase.");
         if (string.IsNullOrWhiteSpace(req.Content)) return BadRequest("Content is required.");
 
@@ -272,9 +286,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> UpdateCard(
         Guid teamId, Guid id, Guid cardId, [FromBody] UpdateCardRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
 
         var card = (await sb.Db.From<RetroCard>()
             .Filter("id",               Operator.Equals, cardId.ToString())
@@ -324,9 +338,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
     [HttpDelete("api/teams/{teamId:guid}/retro/{id:guid}/cards/{cardId:guid}")]
     public async Task<IActionResult> DeleteCard(Guid teamId, Guid id, Guid cardId)
     {
-        if (!await IsMember(teamId)) return Forbid();
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
         if (session.Phase != RetroPhase.Write)
             return BadRequest("Cards can only be deleted during the Write phase.");
 
@@ -351,9 +365,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> UpsertVotes(
         Guid teamId, Guid id, [FromBody] List<VoteEntry> req)
     {
-        if (!await IsMember(teamId)) return Forbid();
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
         if (session.Phase != RetroPhase.Vote)
             return BadRequest("Voting is only allowed during the Vote phase.");
 
@@ -398,9 +412,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> SubmitMood(
         Guid teamId, Guid id, [FromBody] MoodRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
 
         var existing = (await sb.Db.From<MoodCheckin>()
             .Filter("retro_session_id", Operator.Equals, id.ToString())

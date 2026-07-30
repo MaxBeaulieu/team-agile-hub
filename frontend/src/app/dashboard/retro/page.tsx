@@ -18,6 +18,7 @@ import { GroupPanel } from './group-panel'
 import { VotePanel } from './vote-panel'
 import { DiscussPanel } from './discuss-panel'
 import { WrapUpPanel } from './wrapup-panel'
+import { ParticipantsBar } from './participants-panel'
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -496,6 +497,8 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <RetroHeader sprintName={sprintName} session={session} />
+
+      <ParticipantsBar sessionId={session.id} isHost={isFacilitator} />
 
       {isFacilitator && (
         <FacilitatorBar
