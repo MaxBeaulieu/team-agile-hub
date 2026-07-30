@@ -43,7 +43,7 @@ export function FloorMap({
     if (!box) return
     setTip({
       seatId,
-      left: Math.min(event.clientX - box.left + 14, box.width - TOOLTIP_W),
+      left: Math.max(0, Math.min(event.clientX - box.left + 14, box.width - TOOLTIP_W)),
       top: event.clientY - box.top - 10,
     })
   }, [])
