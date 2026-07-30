@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
+import { ColumnTemplatePicker, parseColumns } from '@/components/retro/column-template-picker'
 import { CheckInPanel } from './checkin-panel'
 import { IcebreakerPanel } from './icebreaker-panel'
 import { WritePanel } from './write-panel'
@@ -291,7 +292,7 @@ function NoRetroSession({
   async function create() {
     setCreating(true)
     try {
-      const cols = columns.split(',').map(c => c.trim()).filter(Boolean)
+      const cols = parseColumns(columns)
       await api.post(`/api/teams/${teamId}/sprints/${sprintId}/retro`, {
         columnsJson: JSON.stringify(cols),
         voteCount: votes,
@@ -325,16 +326,7 @@ function NoRetroSession({
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium uppercase text-muted-foreground tracking-wide">
-                Columns (comma-separated)
-              </label>
-              <input
-                value={columns}
-                onChange={e => setColumns(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
+            <ColumnTemplatePicker value={columns} onChange={setColumns} />
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium uppercase text-muted-foreground tracking-wide">
