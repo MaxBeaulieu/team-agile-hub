@@ -73,11 +73,15 @@ export default function RetroJoinPage() {
         const { data: { session } } = await supabase.auth.getSession()
         const signedIn = !!session && !session.user.is_anonymous
 
-        // Signed in with a real account — join under their account name, no
-        // prompt, no throwaway anonymous user.
         if (signedIn) {
-          const result = await join()
-          if (!cancelled) router.replace(retroSessionUrl(result))
+          try {
+            const result = await join()
+            if (!cancelled) router.replace(retroSessionUrl(result))
+          } catch (err) {
+            if (!cancelled) {
+              toast.error(err instanceof Error ? err.message : 'Failed to join retro')
+            }
+          }
           return
         }
 
