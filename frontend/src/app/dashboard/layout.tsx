@@ -20,7 +20,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         {/* Logo */}
         <div className="flex h-14 shrink-0 items-center px-4 border-b border-border">
           <Link href="/dashboard" className="text-xs font-semibold tracking-tight hover:text-primary transition-colors leading-tight">
-            PR Patrol<br />Command Center
+            Command Center
           </Link>
         </div>
 

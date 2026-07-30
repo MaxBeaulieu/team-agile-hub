@@ -55,8 +55,6 @@ function LoginPageInner() {
           href="/"
           className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
         >
-          PR Patrol
-          <br />
           Command Center
         </Link>
         <ThemeSwitcher />

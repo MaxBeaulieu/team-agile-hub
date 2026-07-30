@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { groupCards } from '@/lib/retro-groups'
 import { toast } from 'sonner'
 import { CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -201,20 +202,16 @@ export function WrapUpPanel({
       {cards.length > 0 && (
         <div className="space-y-2">
           <p className="text-sm font-semibold">Top Voted Cards</p>
-          {[...cards]
-            .sort((a, b) => {
-              const va = a.retro_votes.reduce((s, v) => s + v.count, 0)
-              const vb = b.retro_votes.reduce((s, v) => s + v.count, 0)
-              return vb - va
-            })
+          {groupCards(cards)
+            .sort((a, b) => b.totalVotes - a.totalVotes)
             .slice(0, 5)
-            .map(card => {
-              const votes = card.retro_votes.reduce((s, v) => s + v.count, 0)
-              const notes = card.discussionNotes?.trim()
+            .map(group => {
+              const votes  = group.totalVotes
+              const anchor = group.cards.find(c => c.id === group.anchorId) ?? group.cards[0]
               return (
-                <div key={card.id} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
+                <div key={group.key} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {card.isDiscussed
+                    {group.cards.every(c => c.isDiscussed)
                       ? <CheckCircle2 className="size-3.5 text-primary" />
                       : <div className="size-3.5 rounded-full border border-border" />
                     }
@@ -223,13 +220,23 @@ export function WrapUpPanel({
                     </span>
                   </div>
                   <div className="min-w-0 space-y-1.5">
-                    <p className="text-[11px] text-muted-foreground font-medium">{card.column}</p>
-                    <p className="text-xs leading-snug whitespace-pre-wrap break-words">{card.content}</p>
-                    {notes && (
-                      <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
-                        {notes}
-                      </p>
+                    <p className="text-[11px] text-muted-foreground font-medium">{anchor.column}</p>
+                    {group.isGroup && group.label && (
+                      <p className="text-xs font-semibold leading-snug">{group.label}</p>
                     )}
+                    {group.cards.map(card => {
+                      const notes = card.discussionNotes?.trim()
+                      return (
+                        <div key={card.id} className="space-y-1">
+                          <p className="text-xs leading-snug whitespace-pre-wrap break-words">{card.content}</p>
+                          {notes && (
+                            <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
+                              {notes}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )
