@@ -497,6 +497,7 @@ function RetroInner({ teamId, sprintId }: { teamId: string; sprintId: string }) 
   const panelProps = {
     session, cards, hiddenCounts, moodCheckins, teamMembers,
     actionItems: actionItems ?? [],
+    sprintName,
     currentUserId, teamId, isFacilitator, onRefresh: load,
   }
 

@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { groupCards } from '@/lib/retro-groups'
+import { buildRetroMarkdown, downloadMarkdown, retroFileName } from '@/lib/retro-export'
 import { toast } from 'sonner'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CardActionItems } from './discuss-panel'
 import type { RetroSession, MoodCheckin, RetroCard, TeamMemberData, ActionItemData } from './page'
@@ -19,6 +20,7 @@ const MOODS = [
 
 type Props = {
   session: RetroSession
+  sprintName: string
   cards: RetroCard[]
   moodCheckins: MoodCheckin[]
   teamMembers: TeamMemberData[]
@@ -76,7 +78,7 @@ function MoodSummary({ moodCheckins, label }: { moodCheckins: MoodCheckin[], lab
 }
 
 export function WrapUpPanel({
-  session, cards, moodCheckins, teamMembers, actionItems, currentUserId, teamId, isFacilitator, onRefresh,
+  session, sprintName, cards, moodCheckins, teamMembers, actionItems, currentUserId, teamId, isFacilitator, onRefresh,
 }: Props) {
   const [saving, setSaving] = useState(false)
   const myCheckin  = moodCheckins.find(m => m.userId === currentUserId)
@@ -116,6 +118,17 @@ export function WrapUpPanel({
   // Once the retro is completed this panel is a read-only recap — no more input.
   const isCompleted = session.phase === 'Completed'
 
+  function exportMarkdown() {
+    const title = sprintName || 'Retro'
+    downloadMarkdown(retroFileName(title), buildRetroMarkdown({
+      title,
+      cards,
+      moodCheckins,
+      teamMembers,
+      actionItems,
+    }))
+  }
+
   return (
     <div className="flex flex-col gap-8 p-8 max-w-xl mx-auto w-full">
       {/* Title */}
@@ -126,6 +139,10 @@ export function WrapUpPanel({
             ? 'Session summary.'
             : 'Submit your exit mood and review the session summary.'}
         </p>
+        <Button variant="outline" size="sm" className="mt-2" onClick={exportMarkdown}>
+          <Download className="size-3.5" />
+          Export summary (.md)
+        </Button>
       </div>
 
       {/* Exit mood picker */}
