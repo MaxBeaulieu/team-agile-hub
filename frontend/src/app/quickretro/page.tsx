@@ -80,6 +80,7 @@ export default function QuickRetroListPage() {
   );
   const [votes, setVotes] = useState(5);
   const [hideVotes, setHideVotes] = useState(false);
+  const [skipMood, setSkipMood] = useState(false);
 
   const sortedSessions = useMemo(
     () =>
@@ -117,6 +118,7 @@ export default function QuickRetroListPage() {
         columnsJson: JSON.stringify(cols),
         voteCount: votes,
         hideVotesUntilRevealed: hideVotes,
+        skipMoodCheckins: skipMood,
       });
 
       setOpen(false);
@@ -124,6 +126,7 @@ export default function QuickRetroListPage() {
       setColumns("Went Well, Improve, Learnings, Questions");
       setVotes(5);
       setHideVotes(false);
+      setSkipMood(false);
       router.push(`/quickretro/${created.id}`);
     } catch (err) {
       toast.error(
@@ -253,6 +256,16 @@ export default function QuickRetroListPage() {
                 className="accent-primary"
               />
               Hide votes until facilitator reveals
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={skipMood}
+                onChange={(e) => setSkipMood(e.target.checked)}
+                className="accent-primary"
+              />
+              Skip mood check-in steps
             </label>
           </div>
 

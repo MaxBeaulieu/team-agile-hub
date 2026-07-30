@@ -59,6 +59,22 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             : RetroPhase.Completed;
     }
 
+    /// <summary>Random icebreaker from the library, avoiding <paramref name="exclude"/> when possible.</summary>
+    private async Task<Icebreaker?> PickIcebreakerAsync(string? exclude = null)
+    {
+        var all = (await sb.Db.From<Icebreaker>().Get()).Models;
+        if (all.Count == 0) return null;
+
+        var pool = all.Where(i => i.Text != exclude).ToList();
+        if (pool.Count == 0) pool = all;
+        return pool[Random.Shared.Next(pool.Count)];
+    }
+
+    private static List<string> ReadSpeakerOrder(RetroSession session) =>
+        session.SpeakerOrderJson is null
+            ? []
+            : JsonConvert.DeserializeObject<List<string>>(session.SpeakerOrderJson) ?? [];
+
     // GET api/quickretro
     [HttpGet("api/quickretro")]
     public async Task<IActionResult> ListMine()
@@ -88,7 +104,17 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             ColumnsJson = req.ColumnsJson ?? """["Went Well","Improve","Learnings","Questions"]""",
             VoteCount = req.VoteCount ?? 5,
             HideVotesUntilRevealed = req.HideVotesUntilRevealed ?? false,
+            SkipMoodCheckins = req.SkipMoodCheckins ?? false,
         };
+
+        // Without the mood ritual there is nothing to do in the Check-In phase,
+        // so the retro opens on the icebreaker instead (EE-165). The question is
+        // normally drawn when leaving Check-In, so draw it here.
+        if (session.SkipMoodCheckins)
+        {
+            session.Phase = RetroPhase.Icebreaker;
+            session.IcebreakerQuestion = (await PickIcebreakerAsync())?.Text;
+        }
 
         var created = (await sb.Db.From<RetroSession>().Insert(session)).Models.First();
         return Ok(created);
@@ -162,16 +188,12 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
 
         if (session.Phase == RetroPhase.CheckIn && next == RetroPhase.Icebreaker)
         {
+            // The order is drawn up front but nobody is spotlighted yet: the
+            // facilitator starts the round explicitly (EE-163).
             var order = await participants.BuildSpeakerOrderAsync(session, null);
             session.SpeakerOrderJson = JsonConvert.SerializeObject(order);
-            session.CurrentSpeakerId = order.Any() ? Guid.Parse(order[0]) : null;
-
-            var icebreakers = (await sb.Db.From<Icebreaker>().Get()).Models;
-            if (icebreakers.Any())
-            {
-                var pick = icebreakers[Random.Shared.Next(icebreakers.Count)];
-                session.IcebreakerQuestion = pick.Text;
-            }
+            session.CurrentSpeakerId = null;
+            session.IcebreakerQuestion = (await PickIcebreakerAsync())?.Text ?? session.IcebreakerQuestion;
         }
         else if (session.Phase == RetroPhase.Write && next == RetroPhase.Group)
         {
@@ -381,16 +403,55 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             return Ok(new { question = custom, category = "custom" });
         }
 
-        var all = (await sb.Db.From<Icebreaker>().Get()).Models;
-        if (!all.Any()) return BadRequest("No icebreakers available.");
-
-        var others = all.Where(i => i.Text != session.IcebreakerQuestion).ToList();
-        var pool = others.Any() ? others : all;
-        var pick = pool[Random.Shared.Next(pool.Count)];
+        var pick = await PickIcebreakerAsync(session.IcebreakerQuestion);
+        if (pick is null) return BadRequest("No icebreakers available.");
 
         session.IcebreakerQuestion = pick.Text;
         await sb.Db.From<RetroSession>().Update(session);
         return Ok(new { question = pick.Text, category = pick.Category });
+    }
+
+    // POST api/quickretro/{id}/icebreaker/shuffle
+    // Re-draws the speaking order from whoever has joined so far and rewinds the
+    // round to "not started" (EE-163).
+    [HttpPost("api/quickretro/{id:guid}/icebreaker/shuffle")]
+    public async Task<IActionResult> ShuffleSpeakerOrder(Guid id)
+    {
+        var session = await GetFacilitatedSession(id);
+        if (session is null) return NotFound();
+        if (session.Phase != RetroPhase.Icebreaker)
+            return BadRequest("The speaking order can only be shuffled during the Icebreaker phase.");
+
+        var order = await participants.BuildSpeakerOrderAsync(session, null);
+        session.SpeakerOrderJson = JsonConvert.SerializeObject(order);
+        session.CurrentSpeakerId = null;
+
+        await sb.Db.From<RetroSession>().Update(session);
+        return Ok(session);
+    }
+
+    // POST api/quickretro/{id}/icebreaker/start
+    // Spotlights the first speaker, building the order on the fly when the retro
+    // skipped the Check-In phase and never had one drawn (EE-163/EE-165).
+    [HttpPost("api/quickretro/{id:guid}/icebreaker/start")]
+    public async Task<IActionResult> StartIcebreaker(Guid id)
+    {
+        var session = await GetFacilitatedSession(id);
+        if (session is null) return NotFound();
+        if (session.Phase != RetroPhase.Icebreaker)
+            return BadRequest("The icebreaker can only be started during the Icebreaker phase.");
+
+        var order = ReadSpeakerOrder(session);
+        if (order.Count == 0)
+        {
+            order = await participants.BuildSpeakerOrderAsync(session, null);
+            session.SpeakerOrderJson = JsonConvert.SerializeObject(order);
+        }
+        if (order.Count == 0) return BadRequest("Nobody has joined this retro yet.");
+
+        session.CurrentSpeakerId = Guid.Parse(order[0]);
+        await sb.Db.From<RetroSession>().Update(session);
+        return Ok(session);
     }
 
     // PATCH api/quickretro/{id}/speaker
@@ -406,9 +467,7 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         }
         else
         {
-            var order = session.SpeakerOrderJson is null
-                ? new List<string>()
-                : JsonConvert.DeserializeObject<List<string>>(session.SpeakerOrderJson) ?? new();
+            var order = ReadSpeakerOrder(session);
 
             var current = session.CurrentSpeakerId?.ToString() ?? string.Empty;
             var idx = order.IndexOf(current);
@@ -473,7 +532,8 @@ public record QuickCreateRetroRequest(
     string Name,
     string? ColumnsJson,
     int? VoteCount,
-    bool? HideVotesUntilRevealed);
+    bool? HideVotesUntilRevealed,
+    bool? SkipMoodCheckins);
 
 public record QuickAddCardRequest(string Column, string Content);
 

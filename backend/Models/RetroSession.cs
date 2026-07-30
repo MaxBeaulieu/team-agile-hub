@@ -51,6 +51,10 @@ public class RetroSession : BaseModel
     [Column("hide_votes_until_revealed")]
     public bool HideVotesUntilRevealed { get; set; } = false;
 
+    /// <summary>Run this retro without the entry/exit mood check-in steps</summary>
+    [Column("skip_mood_checkins")]
+    public bool SkipMoodCheckins { get; set; } = false;
+
     /// <summary>UserId of the person currently spotlighted in icebreaker</summary>
     [Column("current_speaker_id")]
     public Guid? CurrentSpeakerId { get; set; }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { groupVotesByCardId } from "@/lib/retro-groups";
 import { toast } from "sonner";
@@ -32,18 +32,34 @@ function NotesEditor({
   session: RetroSession;
   onRefresh: () => void;
 }) {
-  const [notes, setNotes] = useState(card.discussionNotes ?? "");
+  const remoteNotes = card.discussionNotes ?? "";
+  const [notes, setNotes] = useState(remoteNotes);
+  const [syncedNotes, setSyncedNotes] = useState(remoteNotes);
+  const [focused, setFocused] = useState(false);
+  const [saving, setSaving] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Notes are shared, but the editor kept its own copy from mount, so everyone
+  // except the person typing saw an empty box. Adopt the server value whenever
+  // this user isn't the one editing (EE-164).
+  if (remoteNotes !== syncedNotes) {
+    setSyncedNotes(remoteNotes);
+    if (!focused && !saving) setNotes(remoteNotes);
+  }
+
+  // Grow the textarea to fit whatever it currently holds.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [notes]);
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
     setNotes(val);
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = "auto";
-      el.style.height = `${el.scrollHeight}px`;
-    }
+    setSaving(true);
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -54,6 +70,8 @@ function NotesEditor({
         onRefresh();
       } catch {
         /* ignore transient save errors */
+      } finally {
+        setSaving(false);
       }
     }, 700);
   }
@@ -63,6 +81,8 @@ function NotesEditor({
       ref={textareaRef}
       value={notes}
       onChange={handleChange}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       placeholder="Discussion notes… (shared, last-write-wins)"
       rows={2}
       className="w-full resize-none bg-transparent text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/60 leading-snug"

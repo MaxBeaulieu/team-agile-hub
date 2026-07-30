@@ -19,7 +19,11 @@ import type {
   TeamMemberData,
   ActionItemData,
 } from "./page";
-import type { RosterMember } from "@/components/retro/types";
+import type {
+  RosterMember,
+  RetroParticipantData,
+} from "@/components/retro/types";
+import { rosterInitials } from "@/components/retro/types";
 
 const MOODS = [
   { value: 1, emoji: "😔", label: "Not great" },
@@ -36,6 +40,7 @@ type Props = {
   teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
   roster: RosterMember[];
+  participants: RetroParticipantData[];
   currentUserId: string;
   isFacilitator: boolean;
   onRefresh: () => void;
@@ -107,6 +112,7 @@ export function WrapUpPanel({
   teamMembers,
   actionItems,
   roster,
+  participants,
   currentUserId,
   isFacilitator,
   onRefresh,
@@ -153,6 +159,14 @@ export function WrapUpPanel({
 
   // Once the retro is completed this panel is a read-only recap — no more input.
   const isCompleted = session.phase === "Completed";
+  const collectsExitMood = !isCompleted && !session.skipMoodCheckins;
+
+  let subtitle = "Session summary.";
+  if (!isCompleted) {
+    subtitle = collectsExitMood
+      ? "Submit your exit mood and review the session summary."
+      : "Review the session summary.";
+  }
 
   function exportMarkdown() {
     const title = session.name || "Retro";
@@ -169,9 +183,10 @@ export function WrapUpPanel({
       buildRetroMarkdown({
         title,
         cards,
-        moodCheckins: visibleMoodCheckins,
+        moodCheckins: session.skipMoodCheckins ? [] : visibleMoodCheckins,
         teamMembers: members,
         actionItems,
+        participants,
       }),
     );
   }
@@ -181,11 +196,7 @@ export function WrapUpPanel({
       {/* Title */}
       <div className="text-center space-y-1">
         <h2 className="text-xl font-semibold">Wrap-Up</h2>
-        <p className="text-sm text-muted-foreground">
-          {isCompleted
-            ? "Session summary."
-            : "Submit your exit mood and review the session summary."}
-        </p>
+        <p className="text-sm text-muted-foreground">{subtitle}</p>
         <Button
           variant="outline"
           size="sm"
@@ -198,7 +209,7 @@ export function WrapUpPanel({
       </div>
 
       {/* Exit mood picker */}
-      {!isCompleted && (
+      {collectsExitMood && (
         <div className="space-y-3">
           <p className="text-sm font-medium text-center">
             How are you feeling after this retro?
@@ -233,10 +244,43 @@ export function WrapUpPanel({
       )}
 
       {/* Mood comparison */}
-      <div className="grid grid-cols-2 gap-6 rounded-xl border border-border bg-card p-4">
-        <MoodSummary moodCheckins={moodCheckins} label="entry" />
-        <MoodSummary moodCheckins={moodCheckins} label="exit" />
-      </div>
+      {!session.skipMoodCheckins && (
+        <div className="grid grid-cols-2 gap-6 rounded-xl border border-border bg-card p-4">
+          <MoodSummary moodCheckins={moodCheckins} label="entry" />
+          <MoodSummary moodCheckins={moodCheckins} label="exit" />
+        </div>
+      )}
+
+      {/* Participants — everyone who joined at any point, not just whoever
+          still has the tab open, so the recap credits the whole room (EE-162). */}
+      {participants.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold">
+            Participants{" "}
+            <span className="text-xs font-normal text-muted-foreground tabular-nums">
+              ({participants.length})
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {participants.map((p) => (
+              <div
+                key={p.userId}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs"
+              >
+                <span className="flex size-5 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-muted-foreground">
+                  {rosterInitials(p.displayName)}
+                </span>
+                <span className="font-medium">{p.displayName}</span>
+                {p.isHost && (
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    host
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Action items */}
       {actionGroups.length > 0 && (

@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { RefreshCw, ChevronRight, Pencil, Check, X } from "lucide-react";
+import {
+  RefreshCw,
+  ChevronRight,
+  Play,
+  Shuffle,
+  Pencil,
+  Check,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RetroSession, TeamMemberData } from "./page";
 import type { RosterMember } from "@/components/retro/types";
@@ -27,6 +35,8 @@ export function IcebreakerPanel({
 }: Props) {
   const [rolling, setRolling] = useState(false);
   const [advancing, setAdvancing] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [shuffling, setShuffling] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftQuestion, setDraftQuestion] = useState("");
 
@@ -34,8 +44,11 @@ export function IcebreakerPanel({
     ? JSON.parse(session.speakerOrderJson)
     : [];
 
+  // The round only begins once the facilitator hits Start, so nobody is put on
+  // the spot the moment the phase opens (EE-163).
+  const hasStarted = session.currentSpeakerId !== null;
   const currentIndex = speakerOrder.indexOf(session.currentSpeakerId ?? "");
-  const upNextId = speakerOrder[currentIndex + 1] ?? null;
+  const upNextId = hasStarted ? (speakerOrder[currentIndex + 1] ?? null) : null;
 
   const memberById = Object.fromEntries(roster.map((m) => [m.userId, m]));
   const currentMember = session.currentSpeakerId
@@ -76,6 +89,34 @@ export function IcebreakerPanel({
       );
     } finally {
       setRolling(false);
+    }
+  }
+
+  async function startRound() {
+    setStarting(true);
+    try {
+      await api.post(`/api/quickretro/${session.id}/icebreaker/start`, {});
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to start the icebreaker",
+      );
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function shuffleOrder() {
+    setShuffling(true);
+    try {
+      await api.post(`/api/quickretro/${session.id}/icebreaker/shuffle`, {});
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to shuffle the order",
+      );
+    } finally {
+      setShuffling(false);
     }
   }
 
@@ -218,6 +259,36 @@ export function IcebreakerPanel({
         </div>
       )}
 
+      {/* Start / shuffle controls, before the round begins */}
+      {!hasStarted &&
+        (isFacilitator ? (
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={startRound}
+              disabled={starting || shuffling}
+            >
+              <Play className="size-3.5" />
+              Start icebreaker
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={shuffleOrder}
+              disabled={starting || shuffling}
+            >
+              <Shuffle className="size-3.5" />
+              Randomize order
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground text-center">
+            Waiting for the facilitator to start the icebreaker…
+          </p>
+        ))}
+
       {/* Facilitator: next speaker button */}
       {isFacilitator && upNextId && (
         <Button
@@ -278,7 +349,7 @@ export function IcebreakerPanel({
       )}
 
       {/* All done */}
-      {!upNextId && currentMember && (
+      {hasStarted && !upNextId && currentMember && (
         <p className="text-xs text-muted-foreground text-center">
           Everyone has shared
           {isFacilitator ? ". Advance to Writing when ready." : "."}
