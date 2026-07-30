@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { RetroSession, MoodCheckin, RetroCard, TeamMemberData } from './page'
+import type { RosterMember } from '@/components/retro/types'
 
 const MOODS = [
   { value: 1, emoji: '😔', label: 'Not great' },
@@ -20,6 +21,7 @@ type Props = {
   cards: RetroCard[]
   moodCheckins: MoodCheckin[]
   teamMembers: TeamMemberData[]
+  roster: RosterMember[]
   currentUserId: string
   teamId: string
   isFacilitator: boolean
@@ -66,7 +68,7 @@ function MoodSummary({ moodCheckins, label }: { moodCheckins: MoodCheckin[], lab
 }
 
 export function WrapUpPanel({
-  session, cards, moodCheckins, teamMembers, currentUserId, teamId, isFacilitator, onRefresh,
+  session, cards, moodCheckins, roster, currentUserId, teamId, isFacilitator, onRefresh,
 }: Props) {
   const [saving, setSaving] = useState(false)
   const myCheckin  = moodCheckins.find(m => m.userId === currentUserId)
@@ -92,9 +94,10 @@ export function WrapUpPanel({
   const discussedCards = cards.filter(c => c.isDiscussed)
   const totalCards     = cards.length
 
-  // Entry vs exit mood comparison
-  const exitCheckedCount = moodCheckins.filter(m => m.exitMood !== null).length
-  const totalMembers     = teamMembers.length
+  // Entry vs exit mood comparison — measured against who's actually here.
+  const rosterUserIds    = new Set(roster.map(m => m.userId))
+  const exitCheckedCount = moodCheckins.filter(m => m.exitMood !== null && rosterUserIds.has(m.userId)).length
+  const totalMembers     = roster.length
 
   return (
     <div className="flex flex-col gap-8 p-8 max-w-xl mx-auto w-full">

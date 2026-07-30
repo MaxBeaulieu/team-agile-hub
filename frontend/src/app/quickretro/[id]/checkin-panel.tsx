@@ -4,6 +4,8 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import type { RetroSession, MoodCheckin, TeamMemberData } from "./page";
+import type { RosterMember } from "@/components/retro/types";
+import { rosterInitials, rosterFirstName } from "@/components/retro/types";
 import { CheckCircle2 } from "lucide-react";
 
 const MOODS = [
@@ -18,6 +20,7 @@ type Props = {
   session: RetroSession;
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
+  roster: RosterMember[];
   currentUserId: string;
   onRefresh: () => void;
 };
@@ -25,7 +28,7 @@ type Props = {
 export function CheckInPanel({
   session,
   moodCheckins,
-  teamMembers,
+  roster,
   currentUserId,
   onRefresh,
 }: Props) {
@@ -52,8 +55,8 @@ export function CheckInPanel({
   const checkedInSet = new Set(
     moodCheckins.filter((m) => m.entryMood !== null).map((m) => m.userId),
   );
-  const count = checkedInSet.size;
-  const total = teamMembers.length;
+  const count = roster.filter((m) => checkedInSet.has(m.userId)).length;
+  const total = roster.length;
 
   return (
     <div className="flex flex-col items-center justify-center gap-10 p-10">
@@ -119,14 +122,9 @@ export function CheckInPanel({
 
         {/* Avatar grid */}
         <div className="flex flex-wrap gap-2 pt-1">
-          {teamMembers.map((m) => {
+          {roster.map((m) => {
             const checkedIn = checkedInSet.has(m.userId);
-            const initials = m.displayName
-              .split(" ")
-              .map((w) => w[0])
-              .join("")
-              .slice(0, 2)
-              .toUpperCase();
+            const initials = rosterInitials(m.displayName);
             const myMoodEntry = moodCheckins.find(
               (c) => c.userId === m.userId,
             )?.entryMood;
@@ -135,7 +133,7 @@ export function CheckInPanel({
               : null;
             return (
               <div
-                key={m.id}
+                key={m.userId}
                 title={`${m.displayName}${checkedIn ? ` — ${MOODS.find((mo) => mo.value === myMoodEntry)?.label}` : " — not checked in"}`}
                 className="relative flex flex-col items-center gap-0.5"
               >
@@ -154,7 +152,7 @@ export function CheckInPanel({
                   <CheckCircle2 className="size-3 text-primary absolute -bottom-0.5 -right-0.5 bg-background rounded-full" />
                 )}
                 <span className="text-[10px] text-muted-foreground max-w-[44px] truncate text-center leading-tight">
-                  {m.displayName.split(" ")[0]}
+                  {rosterFirstName(m.displayName)}
                 </span>
               </div>
             );

@@ -3,28 +3,23 @@ using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using static Postgrest.Constants;
-using System.Security.Claims;
 using System.Security.Cryptography;
 
 namespace Backend.Controllers;
 
 /// <summary>
 /// Invite-link based joining for a retro session: host generates a permanent
-/// shareable link, anonymous or logged-in users join with just a display name.
+/// shareable link. Signed-in users join silently under their real name;
+/// anonymous guests pick a display name on the join screen.
 /// EE-156.
 /// </summary>
 [ApiController]
 [Authorize]
-public class RetroInviteController(SupabaseService sb) : ControllerBase
+public class RetroInviteController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
 {
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
+    private Guid CurrentUserId => RetroParticipantService.UserIdOf(User);
 
-    // Supabase issues `is_anonymous: true` at the root of the JWT for
-    // sessions created via supabase.auth.signInAnonymously().
-    private bool CurrentUserIsAnonymous =>
-        string.Equals(User.FindFirstValue("is_anonymous"), "true", StringComparison.OrdinalIgnoreCase);
+    private bool CurrentUserIsAnonymous => RetroParticipantService.IsAnonymous(User);
 
     // No ambiguous characters (0/O, 1/l/I) to keep the code easy to read/type.
     private const string CodeAlphabet = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -35,56 +30,38 @@ public class RetroInviteController(SupabaseService sb) : ControllerBase
         return new string(bytes.Select(b => CodeAlphabet[b % CodeAlphabet.Length]).ToArray());
     }
 
-    private async Task<RetroSession?> GetSession(Guid sessionId) =>
+    private async Task<RetroSession?> GetSessionByCode(string code) =>
         (await sb.Db.From<RetroSession>()
-            .Filter("id", Operator.Equals, sessionId.ToString())
-            .Get()).Models.FirstOrDefault();
-
-    private async Task<RetroParticipant?> FindParticipant(Guid sessionId, Guid userId) =>
-        (await sb.Db.From<RetroParticipant>()
-            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
-            .Filter("user_id", Operator.Equals, userId.ToString())
+            .Filter("invite_code", Operator.Equals, code)
             .Get()).Models.FirstOrDefault();
 
     // ─── Invite link (host only) ───────────────────────────────────────────────
 
     // GET api/retro/{sessionId}/invite
     // Get-or-create the session's invite code. Idempotent — same code every call.
+    // Works for both sprint retros and sprint-less quick retros.
     [HttpGet("api/retro/{sessionId:guid}/invite")]
     public async Task<IActionResult> GetInvite(Guid sessionId)
     {
-        var session = await GetSession(sessionId);
+        var session = await participants.GetSessionAsync(sessionId);
         if (session is null) return NotFound("Retro session not found.");
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
         if (string.IsNullOrEmpty(session.InviteCode))
         {
             session.InviteCode = GenerateInviteCode();
-            session = (await sb.Db.From<RetroSession>().Update(session)).Models.First();
+            await sb.Db.From<RetroSession>().Update(session);
+
+            // Two concurrent first-time calls generate different codes and the
+            // last write wins, so trust the stored value over the local copy.
+            session = await participants.GetSessionAsync(sessionId) ?? session;
         }
 
-        // Make sure the host shows up in their own participant list.
-        if (await FindParticipant(session.Id, CurrentUserId) is null)
-        {
-            await sb.Db.From<RetroParticipant>().Insert(new RetroParticipant
-            {
-                RetroSessionId = session.Id,
-                UserId         = CurrentUserId,
-                DisplayName    = "Host",
-                IsAnonymous    = false,
-                IsHost         = true,
-            });
-        }
+        // Make sure the host shows up in their own participant list, under
+        // their real name rather than a generic "Host" label.
+        await participants.EnsureParticipantAsync(session, User);
 
         return Ok(new { inviteCode = session.InviteCode });
-    }
-
-    private async Task<Guid?> GetTeamIdForSession(RetroSession session)
-    {
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id", Operator.Equals, session.SprintId.ToString())
-            .Get()).Models.FirstOrDefault();
-        return sprint?.TeamId;
     }
 
     // ─── Public preview (no auth required) ─────────────────────────────────────
@@ -94,64 +71,40 @@ public class RetroInviteController(SupabaseService sb) : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetJoinPreview(string code)
     {
-        var session = (await sb.Db.From<RetroSession>()
-            .Filter("invite_code", Operator.Equals, code)
-            .Get()).Models.FirstOrDefault();
+        var session = await GetSessionByCode(code);
         if (session is null) return NotFound("This invite link is invalid.");
 
-        return Ok(new
-        {
-            sessionId = session.Id,
-            phase     = session.Phase.ToString(),
-            // Current retro view route is still team/sprint-scoped — include
-            // both so the frontend can build a working redirect. Drop once
-            // the standalone retro route lands.
-            teamId    = await GetTeamIdForSession(session),
-            sprintId  = session.SprintId,
-        });
+        return Ok(await BuildJoinTarget(session));
     }
 
     // ─── Join (requires a Supabase JWT — real or anonymous) ────────────────────
 
     // POST api/retro/join/{code}
+    // `displayName` is only required for anonymous guests: signed-in users are
+    // joined under their team/account name, so they never see a name prompt.
     [HttpPost("api/retro/join/{code}")]
-    public async Task<IActionResult> Join(string code, [FromBody] JoinRetroRequest req)
+    public async Task<IActionResult> Join(string code, [FromBody] JoinRetroRequest? req)
     {
-        var displayName = req.DisplayName?.Trim();
-        if (string.IsNullOrEmpty(displayName))
-            return BadRequest("Display name is required.");
-
-        var session = (await sb.Db.From<RetroSession>()
-            .Filter("invite_code", Operator.Equals, code)
-            .Get()).Models.FirstOrDefault();
+        var session = await GetSessionByCode(code);
         if (session is null) return NotFound("This invite link is invalid.");
 
-        var existing = await FindParticipant(session.Id, CurrentUserId);
+        var displayName = CurrentUserIsAnonymous ? req?.DisplayName?.Trim() : null;
+        if (CurrentUserIsAnonymous && string.IsNullOrEmpty(displayName))
+            return BadRequest("Display name is required.");
 
-        RetroParticipant participant;
-        if (existing is not null)
-        {
-            existing.DisplayName = displayName;
-            participant = (await sb.Db.From<RetroParticipant>().Update(existing)).Models.First();
-        }
-        else
-        {
-            participant = (await sb.Db.From<RetroParticipant>().Insert(new RetroParticipant
-            {
-                RetroSessionId = session.Id,
-                UserId         = CurrentUserId,
-                DisplayName    = displayName,
-                IsAnonymous    = CurrentUserIsAnonymous,
-                IsHost         = session.FacilitatorId == CurrentUserId,
-            })).Models.First();
-        }
+        var participant = await participants.EnsureParticipantAsync(session, User, displayName);
+        var target = await BuildJoinTarget(session);
 
         return Ok(new
         {
-            sessionId     = session.Id,
-            participantId = participant.Id,
-            teamId        = await GetTeamIdForSession(session),
-            sprintId      = session.SprintId,
+            target.SessionId,
+            target.RetroName,
+            target.Phase,
+            target.TeamId,
+            target.SprintId,
+            target.IsQuickRetro,
+            ParticipantId = participant.Id,
+            DisplayName   = participant.DisplayName,
         });
     }
 
@@ -161,19 +114,14 @@ public class RetroInviteController(SupabaseService sb) : ControllerBase
     [HttpGet("api/retro/{sessionId:guid}/participants")]
     public async Task<IActionResult> GetParticipants(Guid sessionId)
     {
-        var session = await GetSession(sessionId);
+        var session = await participants.GetSessionAsync(sessionId);
         if (session is null) return NotFound("Retro session not found.");
 
         var isParticipant = session.FacilitatorId == CurrentUserId
-            || await FindParticipant(sessionId, CurrentUserId) is not null;
+            || await participants.IsParticipantAsync(sessionId, CurrentUserId);
         if (!isParticipant) return Forbid();
 
-        var participants = (await sb.Db.From<RetroParticipant>()
-            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
-            .Order("joined_at", Ordering.Ascending)
-            .Get()).Models;
-
-        return Ok(participants);
+        return Ok(await participants.GetParticipantsAsync(sessionId));
     }
 
     // DELETE api/retro/{sessionId}/participants/{participantId}
@@ -181,7 +129,7 @@ public class RetroInviteController(SupabaseService sb) : ControllerBase
     [HttpDelete("api/retro/{sessionId:guid}/participants/{participantId:guid}")]
     public async Task<IActionResult> KickParticipant(Guid sessionId, Guid participantId)
     {
-        var session = await GetSession(sessionId);
+        var session = await participants.GetSessionAsync(sessionId);
         if (session is null) return NotFound("Retro session not found.");
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
@@ -198,6 +146,24 @@ public class RetroInviteController(SupabaseService sb) : ControllerBase
 
         return NoContent();
     }
+
+    // Sprint retros live under the team/sprint-scoped dashboard route, quick
+    // retros under /quickretro/{id} — the client picks using isQuickRetro.
+    private async Task<JoinTarget> BuildJoinTarget(RetroSession session) => new(
+        SessionId:    session.Id,
+        RetroName:    session.Name,
+        Phase:        session.Phase.ToString(),
+        TeamId:       await participants.GetTeamIdForSessionAsync(session),
+        SprintId:     session.SprintId,
+        IsQuickRetro: !session.SprintId.HasValue);
 }
 
-public record JoinRetroRequest(string DisplayName);
+public record JoinRetroRequest(string? DisplayName);
+
+public record JoinTarget(
+    Guid SessionId,
+    string RetroName,
+    string Phase,
+    Guid? TeamId,
+    Guid? SprintId,
+    bool IsQuickRetro);

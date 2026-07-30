@@ -2,9 +2,9 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Loader2, Users } from 'lucide-react'
+import { Loader2, LogIn, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,14 +13,23 @@ import { createClient } from '@/lib/supabase/client'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 
-type JoinPreview = { sessionId: string; phase: string; teamId: string | null; sprintId: string }
+type JoinTarget = {
+  sessionId: string
+  retroName: string
+  phase: string
+  teamId: string | null
+  sprintId: string | null
+  isQuickRetro: boolean
+}
 
-// Today the retro view is still team/sprint-scoped (the standalone retro route
-// is a separate in-flight change), so we redirect into the existing working
-// route using the teamId/sprintId the join/preview endpoints resolve from the
-// session. Once the standalone route lands, this can drop teamId/sprintId.
-function retroSessionUrl(teamId: string | null, sprintId: string) {
-  return `/dashboard/retro?sprintId=${sprintId}&teamId=${teamId ?? ''}`
+type JoinResult = JoinTarget & { participantId: string; displayName: string }
+
+// Sprint retros live on the team/sprint-scoped dashboard route; quick retros
+// have their own standalone route.
+function retroSessionUrl(target: JoinTarget) {
+  return target.isQuickRetro
+    ? `/quickretro/${target.sessionId}`
+    : `/dashboard/retro?sprintId=${target.sprintId}&teamId=${target.teamId ?? ''}`
 }
 
 function storageKey(code: string) {
@@ -34,32 +43,49 @@ export default function RetroJoinPage() {
   const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
-  const [preview, setPreview] = useState<JoinPreview | null>(null)
+  const [preview, setPreview] = useState<JoinTarget | null>(null)
   const [notFound, setNotFound] = useState(false)
-  const [hasSession, setHasSession] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [joining, setJoining] = useState(false)
 
-  // Load the public preview, then figure out whether we can rejoin silently.
+  const join = useCallback(
+    async (name?: string) => {
+      const result = await api.post<JoinResult>(
+        `/api/retro/join/${code}`,
+        name ? { displayName: name } : {},
+      )
+      localStorage.setItem(storageKey(code), result.participantId)
+      return result
+    },
+    [code],
+  )
+
+  // Resolve the invite, then decide whether we can walk the user straight in.
   useEffect(() => {
     let cancelled = false
 
     async function init() {
       try {
-        const result = await api.get<JoinPreview>(`/api/retro/join/${code}`)
+        const target = await api.get<JoinTarget>(`/api/retro/join/${code}`)
         if (cancelled) return
-        setPreview(result)
+        setPreview(target)
 
-        const cached = localStorage.getItem(storageKey(code))
         const { data: { session } } = await supabase.auth.getSession()
+        const signedIn = !!session && !session.user.is_anonymous
 
-        if (cached && session) {
-          // Already joined this link before in this browser — go straight in.
-          router.replace(retroSessionUrl(result.teamId, result.sprintId))
+        // Signed in with a real account — join under their account name, no
+        // prompt, no throwaway anonymous user.
+        if (signedIn) {
+          const result = await join()
+          if (!cancelled) router.replace(retroSessionUrl(result))
           return
         }
 
-        setHasSession(!!session)
+        // Returning guest on this browser — straight back in.
+        if (session && localStorage.getItem(storageKey(code))) {
+          router.replace(retroSessionUrl(target))
+          return
+        }
       } catch {
         if (!cancelled) setNotFound(true)
       } finally {
@@ -69,27 +95,32 @@ export default function RetroJoinPage() {
 
     init()
     return () => { cancelled = true }
-  }, [code, router, supabase])
+  }, [code, router, supabase, join])
 
-  async function handleJoin(e: React.FormEvent) {
+  async function handleSignIn() {
+    // Drop any throwaway anonymous session first, otherwise the sign-in form
+    // would run on top of it.
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user.is_anonymous) await supabase.auth.signOut()
+    localStorage.removeItem(storageKey(code))
+    router.push(`/auth/login?next=${encodeURIComponent(`/retro/join/${code}`)}`)
+  }
+
+  async function handleGuestJoin(e: React.FormEvent) {
     e.preventDefault()
     if (!preview || !displayName.trim()) return
 
     setJoining(true)
     try {
-      if (!hasSession) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
         const { error } = await supabase.auth.signInAnonymously()
         if (error) throw error
       }
 
-      const result = await api.post<{ sessionId: string; participantId: string; teamId: string | null; sprintId: string }>(
-        `/api/retro/join/${code}`,
-        { displayName: displayName.trim() }
-      )
-
-      localStorage.setItem(storageKey(code), result.participantId)
-      toast.success(`Joined as ${displayName.trim()}`)
-      router.replace(retroSessionUrl(result.teamId, result.sprintId))
+      const result = await join(displayName.trim())
+      toast.success(`Joined as ${result.displayName}`)
+      router.replace(retroSessionUrl(result))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to join retro')
     } finally {
@@ -123,13 +154,24 @@ export default function RetroJoinPage() {
             <div className="rounded-xl border border-border bg-card p-6 space-y-4 shadow-sm">
               <div className="text-center space-y-1.5">
                 <Users className="size-6 mx-auto text-primary" />
-                <h1 className="text-lg font-semibold">Join this retro</h1>
+                <h1 className="text-lg font-semibold">Join {preview.retroName}</h1>
                 <p className="text-xs text-muted-foreground">
-                  Enter your name to join — no account required.
+                  Sign in to join with your account, or continue as a guest.
                 </p>
               </div>
 
-              <form onSubmit={handleJoin} className="space-y-3">
+              <Button variant="outline" className="w-full gap-1.5" onClick={handleSignIn}>
+                <LogIn className="size-3.5" />
+                Sign in
+              </Button>
+
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">or</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              <form onSubmit={handleGuestJoin} className="space-y-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="display-name">Your name</Label>
                   <Input
@@ -144,7 +186,7 @@ export default function RetroJoinPage() {
                 </div>
                 <Button type="submit" className="w-full" disabled={joining || !displayName.trim()}>
                   {joining ? <Loader2 className="size-3.5 animate-spin mr-1.5" /> : null}
-                  Join retro
+                  Continue as guest
                 </Button>
               </form>
             </div>

@@ -10,6 +10,7 @@ import type {
   RetroCard,
   TeamMemberData,
 } from "./page";
+import type { RosterMember } from "@/components/retro/types";
 
 const MOODS = [
   { value: 1, emoji: "😔", label: "Not great" },
@@ -24,6 +25,7 @@ type Props = {
   cards: RetroCard[];
   moodCheckins: MoodCheckin[];
   teamMembers: TeamMemberData[];
+  roster: RosterMember[];
   currentUserId: string;
   isFacilitator: boolean;
   onRefresh: () => void;
@@ -85,7 +87,7 @@ export function WrapUpPanel({
   session,
   cards,
   moodCheckins,
-  teamMembers,
+  roster,
   currentUserId,
   isFacilitator,
   onRefresh,
@@ -114,11 +116,12 @@ export function WrapUpPanel({
   const discussedCards = cards.filter((c) => c.isDiscussed);
   const totalCards = cards.length;
 
-  // Entry vs exit mood comparison
+  // Entry vs exit mood comparison — measured against who's actually here.
+  const rosterUserIds = new Set(roster.map((m) => m.userId));
   const exitCheckedCount = moodCheckins.filter(
-    (m) => m.exitMood !== null,
+    (m) => m.exitMood !== null && rosterUserIds.has(m.userId),
   ).length;
-  const totalMembers = teamMembers.length;
+  const totalMembers = roster.length;
 
   return (
     <div className="flex flex-col gap-8 p-8 max-w-xl mx-auto w-full">
