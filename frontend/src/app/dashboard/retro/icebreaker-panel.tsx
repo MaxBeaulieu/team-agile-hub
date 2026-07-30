@@ -6,10 +6,13 @@ import { toast } from 'sonner'
 import { RefreshCw, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { RetroSession, TeamMemberData } from './page'
+import type { RosterMember } from '@/components/retro/types'
+import { rosterInitials, rosterFirstName } from '@/components/retro/types'
 
 type Props = {
   session: RetroSession
   teamMembers: TeamMemberData[]
+  roster: RosterMember[]
   currentUserId: string
   teamId: string
   isFacilitator: boolean
@@ -17,7 +20,7 @@ type Props = {
 }
 
 export function IcebreakerPanel({
-  session, teamMembers, currentUserId, teamId, isFacilitator, onRefresh,
+  session, teamMembers, roster, currentUserId, teamId, isFacilitator, onRefresh,
 }: Props) {
   const [rolling, setRolling]           = useState(false)
   const [advancing, setAdvancing]       = useState(false)
@@ -30,7 +33,13 @@ export function IcebreakerPanel({
   const upNextId        = speakerOrder[currentIndex + 1] ?? null
   const remaining       = speakerOrder.slice(currentIndex + 1)
 
-  const memberById = Object.fromEntries(teamMembers.map(m => [m.userId, m]))
+  // Speaker order can include guests (not on the team) and people who have
+  // since left, so the roster is the primary name source with team members as
+  // a fallback.
+  const memberById: Record<string, { displayName: string }> = {
+    ...Object.fromEntries(teamMembers.map(m => [m.userId, { displayName: m.displayName }])),
+    ...Object.fromEntries(roster.map(m => [m.userId, { displayName: m.displayName }])),
+  }
   const currentMember = session.currentSpeakerId ? memberById[session.currentSpeakerId] : null
   const isMyTurn      = session.currentSpeakerId === currentUserId
 
@@ -59,7 +68,7 @@ export function IcebreakerPanel({
   }
 
   function getInitials(name: string) {
-    return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+    return rosterInitials(name)
   }
 
   return (
@@ -160,7 +169,7 @@ export function IcebreakerPanel({
                   >
                     {initials}
                   </span>
-                  {m?.displayName.split(' ')[0] ?? 'Unknown'}
+                  {m ? rosterFirstName(m.displayName) : 'Unknown'}
                 </div>
               )
             })}

@@ -10,7 +10,7 @@ namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class RetroController(SupabaseService sb) : ControllerBase
+public class RetroController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -136,6 +136,11 @@ public class RetroController(SupabaseService sb) : ControllerBase
 
         if (!await IsMemberOrParticipant(teamId, session.Id)) return Forbid();
 
+        // Everyone who opens the retro gets a participant row, so the roster
+        // (and the presence-based counters built on it) covers team members and
+        // invite-link guests alike.
+        await participants.EnsureParticipantAsync(session, User);
+
         var userId = CurrentUserId;
 
         // All cards (backend bypasses RLS)
@@ -189,6 +194,7 @@ public class RetroController(SupabaseService sb) : ControllerBase
             MoodCheckins = moodCheckins,
             TeamMembers  = teamMembers,
             ActionItems  = actionItems,
+            Participants = await participants.GetParticipantsAsync(session.Id),
             SprintName   = sprint.Name,
         });
     }
@@ -230,15 +236,9 @@ public class RetroController(SupabaseService sb) : ControllerBase
         // Phase transition side-effects
         if (session.Phase == RetroPhase.CheckIn && next == RetroPhase.Icebreaker)
         {
-            // Shuffle team members for speaker order
-            var members = (await sb.Db.From<TeamMember>()
-                .Filter("team_id", Operator.Equals, teamId.ToString())
-                .Get()).Models;
-
-            var shuffled = members
-                .Select(m => m.UserId.ToString())
-                .OrderBy(_ => Random.Shared.Next())
-                .ToList();
+            // Speaker order covers everyone who has joined the retro (team
+            // members and invite-link guests), shuffled.
+            var shuffled = await participants.BuildSpeakerOrderAsync(session, teamId);
 
             session.SpeakerOrderJson = JsonConvert.SerializeObject(shuffled);
             session.CurrentSpeakerId = shuffled.Any() ? Guid.Parse(shuffled[0]) : null;

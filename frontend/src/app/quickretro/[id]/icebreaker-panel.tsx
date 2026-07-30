@@ -6,10 +6,13 @@ import { toast } from "sonner";
 import { RefreshCw, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RetroSession, TeamMemberData } from "./page";
+import type { RosterMember } from "@/components/retro/types";
+import { rosterInitials, rosterFirstName } from "@/components/retro/types";
 
 type Props = {
   session: RetroSession;
   teamMembers: TeamMemberData[];
+  roster: RosterMember[];
   currentUserId: string;
   isFacilitator: boolean;
   onRefresh: () => void;
@@ -17,7 +20,7 @@ type Props = {
 
 export function IcebreakerPanel({
   session,
-  teamMembers,
+  roster,
   currentUserId,
   isFacilitator,
   onRefresh,
@@ -32,7 +35,7 @@ export function IcebreakerPanel({
   const currentIndex = speakerOrder.indexOf(session.currentSpeakerId ?? "");
   const upNextId = speakerOrder[currentIndex + 1] ?? null;
 
-  const memberById = Object.fromEntries(teamMembers.map((m) => [m.userId, m]));
+  const memberById = Object.fromEntries(roster.map((m) => [m.userId, m]));
   const currentMember = session.currentSpeakerId
     ? memberById[session.currentSpeakerId]
     : null;
@@ -65,12 +68,7 @@ export function IcebreakerPanel({
   }
 
   function getInitials(name: string) {
-    return name
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
+    return rosterInitials(name);
   }
 
   return (
@@ -184,7 +182,7 @@ export function IcebreakerPanel({
                   >
                     {initials}
                   </span>
-                  {m?.displayName.split(" ")[0] ?? "Unknown"}
+                  {m ? rosterFirstName(m.displayName) : "Unknown"}
                 </div>
               );
             })}
