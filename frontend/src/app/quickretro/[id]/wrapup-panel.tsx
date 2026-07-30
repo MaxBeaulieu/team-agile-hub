@@ -156,13 +156,21 @@ export function WrapUpPanel({
 
   function exportMarkdown() {
     const title = session.name || "Retro";
+    const members = [...teamMembers, ...roster].map((m) => ({
+      userId: m.userId,
+      displayName: m.displayName,
+    }));
+    const visibleMoodCheckins = moodCheckins.filter((m) =>
+      rosterUserIds.has(m.userId),
+    );
+
     downloadMarkdown(
       retroFileName(title),
       buildRetroMarkdown({
         title,
         cards,
-        moodCheckins,
-        teamMembers,
+        moodCheckins: visibleMoodCheckins,
+        teamMembers: members,
         actionItems,
       }),
     );
