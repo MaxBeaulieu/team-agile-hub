@@ -67,6 +67,10 @@ public class RetroSession : BaseModel
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>Short random code used to build the shareable invite link. Lazily generated.</summary>
+    [Column("invite_code")]
+    public string? InviteCode { get; set; }
+
     [Reference(typeof(RetroCard), includeInQuery: false, columnName: "retro_cards")]
     [JsonProperty("retro_cards")]
     public List<RetroCard> Cards { get; set; } = new();
@@ -74,4 +78,8 @@ public class RetroSession : BaseModel
     [Reference(typeof(MoodCheckin), includeInQuery: false, columnName: "mood_checkins")]
     [JsonProperty("mood_checkins")]
     public List<MoodCheckin> MoodCheckins { get; set; } = new();
+
+    [Reference(typeof(RetroParticipant), includeInQuery: false, columnName: "retro_participants")]
+    [JsonProperty("retro_participants")]
+    public List<RetroParticipant> Participants { get; set; } = new();
 }

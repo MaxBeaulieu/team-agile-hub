@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard, Users, AlertTriangle,
-  BarChart3, Settings, CalendarDays, CalendarRange, Layers, MessageSquare, Spade, CheckSquare, LayoutGrid, Coffee,
+  BarChart3, Settings, CalendarDays, CalendarRange, Layers, MessageSquare, Spade, CheckSquare, LayoutGrid, Coffee, Map,
 } from 'lucide-react'
 import { ThemeSwitcher } from '@/components/ui/theme-switcher'
 import { SignOutButton } from '@/components/ui/sign-out-button'
@@ -29,6 +29,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <NavItem href="/dashboard" icon={LayoutDashboard} label="Dashboard" />
           <NavItem href="/dashboard/teams" icon={Users} label="Teams" />
           <NavItem href="/dashboard/workload" icon={LayoutGrid} label="Workload" />
+          <NavItem href="/dashboard/floor" icon={Map} label="Floor Map" />
           <NavItem href="/dashboard/standup" icon={Coffee} label="Standup" />
           <NavItem href="/dashboard/sprints" icon={CalendarDays} label="Sprints" />
           <NavItem href="/dashboard/planning/list" icon={CalendarRange} label="Sprint Planning" />

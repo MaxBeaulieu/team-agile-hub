@@ -3,7 +3,12 @@ using Backend.Services;
 using dotenv.net;
 using Newtonsoft.Json.Converters;
 
-DotEnv.Load();
+// Load environment variables: `.env` for shared/example defaults, then
+// `.env.local` (gitignored, machine-specific) which overrides it — same
+// precedence convention the frontend already follows via Next.js.
+DotEnv.Load(options: new DotEnvOptions(
+    envFilePaths: new[] { ".env", ".env.local" }
+));
 
 var builder = WebApplication.CreateBuilder(args);
 

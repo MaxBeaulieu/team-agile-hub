@@ -1,0 +1,277 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { toast } from 'sonner'
+
+import './floor-plan.css'
+
+import { api } from '@/lib/api'
+import { createClient } from '@/lib/supabase/client'
+
+import { FloorLegend, type LegendTeam } from './FloorLegend'
+import { FloorMap } from './FloorMap'
+import { FloorStatsBar } from './FloorStatsBar'
+import { FloorToolbar } from './FloorToolbar'
+import { RosterPanel } from './RosterPanel'
+import { SeatDetailPanel } from './SeatDetailPanel'
+import { floorApi } from './floorApi'
+import { floorCssVars } from './floorTokens'
+import type { ColorBy, KitLayer, Seat, SeatAssignment, SeatMap, ViewMode } from './floorTypes'
+import { computeStats, isOccupied } from './floorTypes'
+
+interface TeamSummary {
+  id: string
+  name: string
+  team_members: { userId: string; role: string }[]
+}
+
+function toMap(seats: Seat[]): SeatMap {
+  return Object.fromEntries(seats.map((seat) => [seat.seatNumber, seat]))
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message.replace(/^API \d+:\s*/, '') : fallback
+}
+
+export function FloorPlanPage() {
+  const [seats, setSeats] = useState<Seat[]>([])
+  const [myTeamIds, setMyTeamIds] = useState<string[]>([])
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+
+  const [view, setView] = useState<ViewMode>('roster')
+  const [colorBy, setColorBy] = useState<ColorBy>('status')
+  const [kitLayer, setKitLayer] = useState<KitLayer>('none')
+  const [query, setQuery] = useState('')
+  const [myTeamsOnly, setMyTeamsOnly] = useState(false)
+  const [hoveredSeat, setHoveredSeat] = useState<number | null>(null)
+  const [selectedSeat, setSelectedSeat] = useState<number | null>(null)
+
+  const refresh = useCallback(async () => {
+    const next = await floorApi.listSeats()
+    setSeats(next)
+    return next
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const [seatList, teams, { data }] = await Promise.all([
+          floorApi.listSeats(),
+          api.get<TeamSummary[]>('/api/teams'),
+          createClient().auth.getUser(),
+        ])
+        if (cancelled) return
+
+        const userId = data.user?.id
+        setSeats(seatList)
+        setMyTeamIds(teams.map((team) => team.id))
+        // Admin-ness is per team and is the only role this app has, so being an
+        // admin of any team is what unlocks the floor-wide actions.
+        setIsAdmin(
+          Boolean(userId) &&
+            teams.some((team) =>
+              team.team_members?.some(
+                (member) => member.userId === userId && member.role?.toLowerCase() === 'admin',
+              ),
+            ),
+        )
+        setLoadError(null)
+      } catch (error) {
+        if (!cancelled) setLoadError(errorMessage(error, 'Could not load the floor.'))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedSeat(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const seatMap = useMemo(() => toMap(seats), [seats])
+  const stats = useMemo(() => computeStats(seats), [seats])
+  const openReports = useMemo(
+    () => seats.reduce((total, seat) => total + seat.openDefectCount, 0),
+    [seats],
+  )
+
+  const legendTeams = useMemo<LegendTeam[]>(() => {
+    const byId = new Map<string, LegendTeam>()
+    for (const seat of seats) {
+      if (!isOccupied(seat)) continue
+      const key = seat.occupantTeamId ?? '—'
+      if (!byId.has(key)) {
+        byId.set(key, { id: seat.occupantTeamId, name: seat.occupantTeamName ?? 'No team' })
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [seats])
+
+  const isDimmed = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return (seatNumber: number) => {
+      const seat = seatMap[seatNumber]
+      if (!seat) return false
+      if (needle) {
+        const match =
+          seat.occupantName?.toLowerCase().includes(needle) ||
+          String(seat.seatNumber).includes(needle)
+        if (!match) return true
+      }
+      if (myTeamsOnly && !(seat.occupantTeamId && myTeamIds.includes(seat.occupantTeamId))) {
+        return true
+      }
+      return false
+    }
+  }, [query, myTeamsOnly, myTeamIds, seatMap])
+
+  const run = useCallback(
+    (action: () => Promise<unknown>, success: string, failure: string) => {
+      startTransition(async () => {
+        try {
+          await action()
+          await refresh()
+          toast.success(success)
+        } catch (error) {
+          toast.error(errorMessage(error, failure))
+        }
+      })
+    },
+    [refresh],
+  )
+
+  const handleAssign = useCallback(
+    (seat: Seat, assignment: SeatAssignment) =>
+      run(
+        () => floorApi.assign(seat.id, assignment),
+        `Seat #${seat.seatNumber} is yours (${assignment}).`,
+        'Could not take that seat.',
+      ),
+    [run],
+  )
+
+  const handleRelease = useCallback(
+    (seat: Seat) =>
+      run(
+        () => floorApi.release(seat.id),
+        `Seat #${seat.seatNumber} released.`,
+        'Could not release that seat.',
+      ),
+    [run],
+  )
+
+  const handleUnassign = useCallback(
+    (seat: Seat) =>
+      run(
+        () => floorApi.unassign(seat.id),
+        `Seat #${seat.seatNumber} is free again.`,
+        'Could not unassign that seat.',
+      ),
+    [run],
+  )
+
+  const handleSaveNote = useCallback(
+    (seat: Seat, note: string | null) =>
+      run(() => floorApi.updateNote(seat.id, note), 'Note saved.', 'Could not save the note.'),
+    [run],
+  )
+
+  const handleReportDefect = useCallback(
+    (seat: Seat, reason: string) =>
+      run(
+        () => floorApi.reportDefect(seat.id, reason),
+        'Report sent to the admins.',
+        'Could not send the report.',
+      ),
+    [run],
+  )
+
+  const handleSeatClick = useCallback(
+    (seatNumber: number) => setSelectedSeat((current) => (current === seatNumber ? null : seatNumber)),
+    [],
+  )
+
+  const selected = selectedSeat === null ? null : (seatMap[selectedSeat] ?? null)
+
+  return (
+    <div
+      className={`fp-root fp--${view}`}
+      style={floorCssVars as React.CSSProperties}
+    >
+      <div className="fp-inner">
+        <FloorToolbar
+          view={view}
+          onView={setView}
+          colorBy={colorBy}
+          onColorBy={setColorBy}
+          kitLayer={kitLayer}
+          onKitLayer={setKitLayer}
+          query={query}
+          onQuery={setQuery}
+          myTeamsOnly={myTeamsOnly}
+          onMyTeamsOnly={setMyTeamsOnly}
+          isAdmin={isAdmin}
+          openReports={openReports}
+        />
+
+        <FloorStatsBar stats={stats} />
+
+        {loadError && <p className="fp-alert">{loadError}</p>}
+        {loading && !loadError && <p className="fp-detail-empty">Loading the floor…</p>}
+
+        <div className="fp-stage">
+          <FloorMap
+            seats={seatMap}
+            colorBy={colorBy}
+            kitLayer={kitLayer}
+            isDimmed={isDimmed}
+            highlightedSeat={hoveredSeat}
+            selectedSeat={selectedSeat}
+            onHoverSeat={setHoveredSeat}
+            onSeatClick={handleSeatClick}
+            onBackgroundClick={() => setSelectedSeat(null)}
+          />
+
+          {view === 'roster' && (
+            <aside className="fp-aside">
+              <SeatDetailPanel
+                key={selected?.id ?? 'none'}
+                seat={selected}
+                isAdmin={isAdmin}
+                busy={pending}
+                onAssign={handleAssign}
+                onRelease={handleRelease}
+                onUnassign={handleUnassign}
+                onSaveNote={handleSaveNote}
+                onReportDefect={handleReportDefect}
+              />
+              <RosterPanel
+                seats={seats}
+                highlightedSeat={hoveredSeat}
+                selectedSeat={selectedSeat}
+                onHoverSeat={setHoveredSeat}
+                onSeatClick={handleSeatClick}
+              />
+            </aside>
+          )}
+        </div>
+
+        <FloorLegend kitLayer={kitLayer} teams={legendTeams} />
+      </div>
+    </div>
+  )
+}
