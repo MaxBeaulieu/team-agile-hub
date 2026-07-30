@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { RefreshCw, ChevronRight } from "lucide-react";
+import { RefreshCw, ChevronRight, Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RetroSession, TeamMemberData } from "./page";
 
@@ -24,6 +24,8 @@ export function IcebreakerPanel({
 }: Props) {
   const [rolling, setRolling] = useState(false);
   const [advancing, setAdvancing] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftQuestion, setDraftQuestion] = useState("");
 
   const speakerOrder: string[] = session.speakerOrderJson
     ? JSON.parse(session.speakerOrderJson)
@@ -45,6 +47,30 @@ export function IcebreakerPanel({
       onRefresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to re-roll");
+    } finally {
+      setRolling(false);
+    }
+  }
+
+  // Same endpoint as the re-roll, with the wording supplied instead of picked.
+  async function saveQuestion() {
+    const question = draftQuestion.trim();
+    if (!question) {
+      toast.error("Question cannot be empty");
+      return;
+    }
+
+    setRolling(true);
+    try {
+      await api.post(`/api/quickretro/${session.id}/icebreaker/roll`, {
+        question,
+      });
+      setEditing(false);
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to save question",
+      );
     } finally {
       setRolling(false);
     }
@@ -80,22 +106,83 @@ export function IcebreakerPanel({
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Icebreaker Question
         </p>
-        <p className="text-lg font-semibold leading-snug">
-          {session.icebreakerQuestion ?? "Loading question…"}
-        </p>
-        {isFacilitator && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-            onClick={reRoll}
-            disabled={rolling}
-          >
-            <RefreshCw
-              className={["size-3", rolling ? "animate-spin" : ""].join(" ")}
+
+        {editing ? (
+          <div className="space-y-2">
+            <textarea
+              value={draftQuestion}
+              onChange={(e) => setDraftQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  saveQuestion();
+                }
+                if (e.key === "Escape") setEditing(false);
+              }}
+              rows={2}
+              maxLength={500}
+              autoFocus
+              placeholder="Type your own icebreaker question…"
+              className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-center text-lg font-semibold leading-snug outline-none placeholder:text-sm placeholder:font-normal placeholder:text-muted-foreground focus:ring-1 focus:ring-primary"
             />
-            New question
-          </Button>
+            <div className="flex items-center justify-center gap-1.5">
+              <Button
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={saveQuestion}
+                disabled={rolling}
+              >
+                <Check className="size-3" />
+                Save
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setEditing(false)}
+              >
+                <X className="size-3" />
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-lg font-semibold leading-snug">
+              {session.icebreakerQuestion ?? "Loading question…"}
+            </p>
+            {isFacilitator && (
+              <div className="flex items-center justify-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={reRoll}
+                  disabled={rolling}
+                >
+                  <RefreshCw
+                    className={["size-3", rolling ? "animate-spin" : ""].join(
+                      " ",
+                    )}
+                  />
+                  New question
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setDraftQuestion(session.icebreakerQuestion ?? "");
+                    setEditing(true);
+                  }}
+                  disabled={rolling}
+                >
+                  <Pencil className="size-3" />
+                  Write my own
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
