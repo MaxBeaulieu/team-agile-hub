@@ -26,8 +26,12 @@ public class RetroSession : BaseModel
     [PrimaryKey("id", false)]
     public Guid Id { get; set; } = Guid.NewGuid();
 
+    [Column("name")]
+    [MaxLength(120)]
+    public string Name { get; set; } = "Retro";
+
     [Column("sprint_id")]
-    public Guid SprintId { get; set; }
+    public Guid? SprintId { get; set; }
 
     [Column("facilitator_id")]
     public Guid? FacilitatorId { get; set; }
