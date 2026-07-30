@@ -180,6 +180,30 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         return Ok(ToDto(seat, CurrentUserId));
     }
 
+    // ─── Equipment ────────────────────────────────────────────────────────────
+
+    // PATCH api/seats/{id}/equipment — flag the dock / terminal as present or gone
+    [HttpPatch("{id:guid}/equipment")]
+    public async Task<IActionResult> UpdateEquipment(
+        Guid id, [FromBody] UpdateSeatEquipmentRequest req)
+    {
+        if (req.HasDock is null && req.HasTerminal is null)
+            return BadRequest("Nothing to update.");
+
+        var seat = await FindSeat(id);
+        if (seat is null) return NotFound();
+
+        // Whoever sits there can see what is on the desk; anyone else needs to be an admin.
+        if (seat.OccupantId != CurrentUserId && !await IsAdmin()) return Forbid();
+
+        seat.HasDock = req.HasDock ?? seat.HasDock;
+        seat.HasTerminal = req.HasTerminal ?? seat.HasTerminal;
+        seat.UpdatedAt = DateTime.UtcNow;
+
+        await sb.Db.From<Seat>().Update(seat);
+        return Ok(ToDto(seat, CurrentUserId));
+    }
+
     // ─── Defect reports ───────────────────────────────────────────────────────
 
     // POST api/seats/{id}/reports
@@ -389,5 +413,6 @@ public record SeatDefectReportDto(
 
 public record AssignSeatRequest(SeatAssignment Assignment);
 public record UpdateSeatNoteRequest(string? Note);
+public record UpdateSeatEquipmentRequest(bool? HasDock, bool? HasTerminal);
 public record ReportSeatDefectRequest(string? Reason);
 public record CloseSeatDefectRequest(string? ResolutionNote);

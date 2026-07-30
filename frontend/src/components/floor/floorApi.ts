@@ -1,6 +1,6 @@
 import { api } from '@/lib/api'
 
-import type { Seat, SeatAssignment, SeatDefectReport } from './floorTypes'
+import type { Seat, SeatAssignment, SeatDefectReport, SeatKit } from './floorTypes'
 
 /** Every seat mutation is server-authoritative: the backend re-derives the
  *  status and returns the row, and the page refetches the floor afterwards. */
@@ -16,6 +16,12 @@ export const floorApi = {
 
   updateNote: (seatId: string, note: string | null) =>
     api.patch<Seat>(`/api/seats/${seatId}/note`, { note }),
+
+  updateEquipment: (seatId: string, kit: SeatKit, present: boolean) =>
+    api.patch<Seat>(
+      `/api/seats/${seatId}/equipment`,
+      kit === 'dock' ? { hasDock: present } : { hasTerminal: present },
+    ),
 
   reportDefect: (seatId: string, reason: string) =>
     api.post<SeatDefectReport>(`/api/seats/${seatId}/reports`, { reason }),

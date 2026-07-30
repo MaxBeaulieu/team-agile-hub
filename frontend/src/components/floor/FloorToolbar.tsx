@@ -38,7 +38,7 @@ function Segmented<T extends string>({
   onChange: (next: T) => void
 }) {
   return (
-    <>
+    <div className="fp-group">
       <span className="fp-lbl">{label}</span>
       <div className="fp-seg" role="group" aria-label={label}>
         {options.map((o) => (
@@ -52,7 +52,7 @@ function Segmented<T extends string>({
           </button>
         ))}
       </div>
-    </>
+    </div>
   )
 }
 
@@ -63,10 +63,6 @@ export interface FloorToolbarProps {
   onColorBy: (colorBy: ColorBy) => void
   kitLayer: KitLayer
   onKitLayer: (layer: KitLayer) => void
-  query: string
-  onQuery: (query: string) => void
-  myTeamsOnly: boolean
-  onMyTeamsOnly: (value: boolean) => void
   isAdmin: boolean
   openReports: number
 }
@@ -78,10 +74,6 @@ export function FloorToolbar({
   onColorBy,
   kitLayer,
   onKitLayer,
-  query,
-  onQuery,
-  myTeamsOnly,
-  onMyTeamsOnly,
   isAdmin,
   openReports,
 }: FloorToolbarProps) {
@@ -92,11 +84,11 @@ export function FloorToolbar({
         <span>seat assignment</span>
       </div>
 
-      <Segmented label="View" options={VIEWS} value={view} onChange={onView} />
-      <Segmented label="Color" options={COLORS} value={colorBy} onChange={onColorBy} />
-      <Segmented label="Equipment" options={KITS} value={kitLayer} onChange={onKitLayer} />
-
-      <div className="fp-spacer" />
+      <div className="fp-groups">
+        <Segmented label="View" options={VIEWS} value={view} onChange={onView} />
+        <Segmented label="Color" options={COLORS} value={colorBy} onChange={onColorBy} />
+        <Segmented label="Equipment" options={KITS} value={kitLayer} onChange={onKitLayer} />
+      </div>
 
       {isAdmin && (
         <Link className="fp-chip" href="/dashboard/floor/reports">
@@ -104,24 +96,6 @@ export function FloorToolbar({
           {openReports > 0 && <b className="fp-chip-ct">{openReports}</b>}
         </Link>
       )}
-
-      <input
-        type="search"
-        className="fp-search"
-        placeholder="Find a person or seat"
-        aria-label="Find a person or seat"
-        value={query}
-        onChange={(event) => onQuery(event.target.value)}
-      />
-
-      <button
-        type="button"
-        className="fp-chip"
-        aria-pressed={myTeamsOnly}
-        onClick={() => onMyTeamsOnly(!myTeamsOnly)}
-      >
-        My teams only
-      </button>
     </div>
   )
 }

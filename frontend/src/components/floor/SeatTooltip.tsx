@@ -7,8 +7,14 @@ import { isOccupied } from './floorTypes'
 function KitLines({ seat }: { seat: Seat }) {
   return (
     <div className="fp-tip-kit">
-      <span>{seat.hasDock ? 'Docking station' : <b>No docking station</b>}</span>
-      <span>{seat.hasTerminal ? 'Terminal' : <b>No terminal</b>}</span>
+      <span className={seat.hasDock ? 'is-on' : 'is-off'}>
+        <i aria-hidden="true" />
+        Docking station · {seat.hasDock ? 'yes' : 'no'}
+      </span>
+      <span className={seat.hasTerminal ? 'is-on' : 'is-off'}>
+        <i aria-hidden="true" />
+        Terminal · {seat.hasTerminal ? 'yes' : 'no'}
+      </span>
     </div>
   )
 }
@@ -47,8 +53,6 @@ export function SeatTooltip({ seat, left, top }: { seat: Seat; left: number; top
           {seat.openDefectCount} open {seat.openDefectCount === 1 ? 'report' : 'reports'}
         </div>
       )}
-
-      <div className="fp-tip-act">Click for details</div>
     </div>
   )
 }

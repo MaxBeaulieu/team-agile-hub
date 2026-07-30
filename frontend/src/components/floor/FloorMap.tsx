@@ -1,24 +1,32 @@
 'use client'
 
-import { useCallback, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 
 import { BenchIsland } from './BenchIsland'
 import { FloorShell } from './FloorShell'
 import { HexRing } from './HexRing'
-import { ISLANDS, VIEW_BOX } from './floorGeometry'
+import { ISLANDS, VIEW_BOX, VIEW_H, VIEW_MIN_Y, VIEW_W, VP_OFFICE } from './floorGeometry'
 import type { ColorBy, KitLayer, SeatMap } from './floorTypes'
 import { type SeatLayer } from './Seat'
 import { SeatTooltip } from './SeatTooltip'
 
 const TOOLTIP_W = 190
 
+/** The panel lives in the one room nobody can book, so it costs no desk space. */
+const VP_PANEL_BOX = {
+  left: `${(VP_OFFICE.room.x / VIEW_W) * 100}%`,
+  top: `${((VP_OFFICE.room.y - VIEW_MIN_Y) / VIEW_H) * 100}%`,
+  width: `${(VP_OFFICE.room.w / VIEW_W) * 100}%`,
+  height: `${(VP_OFFICE.room.h / VIEW_H) * 100}%`,
+}
+
 export interface FloorMapProps {
   seats: SeatMap
   colorBy: ColorBy
   kitLayer: KitLayer
-  isDimmed: (seatId: number) => boolean
   highlightedSeat: number | null
   selectedSeat: number | null
+  panel?: ReactNode
   onHoverSeat: (seatId: number | null) => void
   onSeatClick: (seatId: number) => void
   onBackgroundClick: () => void
@@ -28,9 +36,9 @@ export function FloorMap({
   seats,
   colorBy,
   kitLayer,
-  isDimmed,
   highlightedSeat,
   selectedSeat,
+  panel,
   onHoverSeat,
   onSeatClick,
   onBackgroundClick,
@@ -65,7 +73,6 @@ export function FloorMap({
     seats,
     colorBy,
     kitLayer,
-    isDimmed,
     isSelected: (id) => id === highlightedSeat || id === selectedSeat,
     onPointerEnter: handleEnter,
     onPointerMove: place,
@@ -76,16 +83,28 @@ export function FloorMap({
   const tipSeat = tip ? seats[tip.seatId] : null
 
   return (
-    <div className="fp-mapwrap" ref={wrapRef} onClick={onBackgroundClick}>
-      <svg viewBox={VIEW_BOX} role="group" aria-label="Top-down plan of the second floor">
-        <FloorShell />
-        <HexRing layer={layer} />
-        {ISLANDS.map((island) => (
-          <BenchIsland key={island.pod} island={island} layer={layer} />
-        ))}
-      </svg>
+    <div
+      className="fp-mapbox"
+      style={{ '--fp-plan-ratio': VIEW_W / VIEW_H } as CSSProperties}
+      onClick={onBackgroundClick}
+    >
+      <div className="fp-mapwrap" ref={wrapRef}>
+        <svg viewBox={VIEW_BOX} role="group" aria-label="Top-down plan of the second floor">
+          <FloorShell />
+          <HexRing layer={layer} />
+          {ISLANDS.map((island) => (
+            <BenchIsland key={island.pod} island={island} layer={layer} />
+          ))}
+        </svg>
 
-      {tip && tipSeat && <SeatTooltip seat={tipSeat} left={tip.left} top={tip.top} />}
+        {tip && tipSeat && <SeatTooltip seat={tipSeat} left={tip.left} top={tip.top} />}
+
+        {panel && (
+          <div className="fp-vp" style={VP_PANEL_BOX} onClick={(event) => event.stopPropagation()}>
+            {panel}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

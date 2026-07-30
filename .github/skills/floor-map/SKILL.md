@@ -1,6 +1,6 @@
 ---
 name: floor-map
-description: 'Work on the office Floor Map — the top-down SVG seating chart at /dashboard/floor, seat assignment (permanent/floating), seat notes, desk defect reports, the admin report queue, and floor stats. Use when touching frontend/src/components/floor/, frontend/src/app/dashboard/floor/, backend/Controllers/SeatsController.cs, backend/Models/Seat.cs, or supabase/migrations/006_seats.sql; or when asked about desks, seats, pods, seating, hot-desking, or who sits where.'
+description: 'Work on the office Floor Map — the top-down SVG seating chart at /dashboard/floor, seat assignment (permanent/floating), seat notes, desk defect reports, the admin report queue, and floor stats. Use when touching frontend/src/components/floor/, frontend/src/app/dashboard/floor/, backend/Controllers/SeatsController.cs, backend/Models/Seat.cs, or supabase/migrations/007_seats.sql; or when asked about desks, seats, pods, seating, hot-desking, or who sits where.'
 ---
 
 # Floor Map
@@ -17,17 +17,20 @@ numbering has real gaps, do not "fix" them).
 | Page routes | `frontend/src/app/dashboard/floor/` |
 | API | `backend/Controllers/SeatsController.cs` |
 | Models | `backend/Models/Seat.cs`, `backend/Models/SeatDefectReport.cs` |
-| Schema | `supabase/migrations/006_seats.sql` |
+| Schema | `supabase/migrations/007_seats.sql` |
 
 `FloorPlanPage.tsx` is the only stateful component; everything else is presentational.
 It takes **no props** — it loads seats, teams, and the current user itself.
 
 ## Before you start
 
-The `seats` table must exist. If `GET /api/seats` returns
-`PGRST205 — Could not find the table 'public.seats'`, migration 006 has not been
-applied. There is no Supabase CLI in this repo: the SQL must be pasted into the
-Supabase SQL editor by hand.
+The `seats` table must exist. Local dev runs Supabase in Docker, so
+`npx supabase start` applies every migration automatically and
+`npx supabase db reset` re-runs them from scratch. Against a hosted project,
+apply the SQL through the dashboard SQL editor or `npx supabase db push`.
+
+If `GET /api/seats` returns `PGRST205 — Could not find the table 'public.seats'`,
+the migration has not been applied to whichever database the backend is pointed at.
 
 ## Rules that are easy to break
 
@@ -65,11 +68,14 @@ through the supabase-csharp / Postgrest SDK via `SupabaseService.Db`, which uses
 the **service-role key and therefore bypasses RLS** — authorization is the
 controller's job, not the database's.
 
-**Admin means `team_members.role`.** The DB stores capitalised `'Admin'`/`'Member'`;
-the C# `TeamRole` enum declares lowercase `EnumMember` values. Newtonsoft parses
-case-insensitively, so this works — but it means you must **never filter by the
-role string in a Postgrest query**. Fetch the memberships and compare
-`Role == TeamRole.Admin` in memory, as `SeatsController` and `TeamsController` do.
+**Admin means `team_members.role`.** Values are lowercase `'member'`/`'admin'` —
+`001_initial_schema.sql` originally declared them PascalCase and
+`010_normalize_enum_casing.sql` corrected that, so old branches, old rows, and
+old docs may disagree. Because the casing has moved once already, **do not filter
+by the role string in a Postgrest query**. Fetch the memberships and compare
+`Role == TeamRole.Admin` in memory, as `SeatsController` and `TeamsController`
+do — Newtonsoft parses the enum case-insensitively, so that comparison survives
+either convention.
 
 DTOs serialize camelCase (ASP.NET default resolver) with `StringEnumConverter`
 registered globally in `Program.cs`, so `EnumMemberAttribute` values are honoured
@@ -84,6 +90,7 @@ on the wire.
 | POST | `/api/seats/{id}/release` | occupant or admin |
 | POST | `/api/seats/{id}/unassign` | admin only |
 | PATCH | `/api/seats/{id}/note` | any authenticated |
+| PATCH | `/api/seats/{id}/equipment` | occupant or admin |
 | POST | `/api/seats/{id}/reports` | any authenticated |
 | GET | `/api/seats/reports?status=` | admin only |
 | POST | `/api/seats/reports/{reportId}/close` | admin only |
@@ -107,8 +114,10 @@ helper: it wraps the call in `startTransition`, refetches the floor, and toasts.
 The server re-derives status and the page refetches — the client never guesses
 what the new state is.
 
-`SeatDetailPanel` is remounted via a `key` on the selected seat so in-progress
-note and defect drafts don't leak between desks.
+`SeatActionBar` (thin row above the plan) and `SeatNoteBox` (docked in the VP
+office footprint, positioned from `VP_OFFICE.room`) are both remounted via a
+`key` on the selected seat so in-progress note and defect drafts don't leak
+between desks.
 
 Fonts (`--fp-font-sans`, `--fp-font-cond`, `--fp-font-mono`) are loaded in
 `app/dashboard/floor/layout.tsx` on a wrapper with `display: contents` — it must

@@ -12,6 +12,9 @@ export type SeatAssignment = 'permanent' | 'floating'
 
 export type KitLayer = 'none' | 'terminal' | 'dock'
 
+/** The two pieces of kit a desk can have or be missing. */
+export type SeatKit = 'dock' | 'terminal'
+
 export type ViewMode = 'plan' | 'roster' | 'print'
 
 export type ColorBy = 'status' | 'team'

@@ -7,8 +7,10 @@
 import type { Facing, PodId } from './floorTypes'
 
 export const VIEW_W = 1240
-export const VIEW_H = 720
-export const VIEW_BOX = `0 0 ${VIEW_W} ${VIEW_H}`
+/** The drawing is cropped tight to the slab so the plan fills its frame. */
+export const VIEW_MIN_Y = 12
+export const VIEW_H = 580
+export const VIEW_BOX = `0 ${VIEW_MIN_Y} ${VIEW_W} ${VIEW_H}`
 
 export const DESK_W = 92
 export const DESK_H = 56
@@ -29,17 +31,17 @@ export interface IslandDef {
  * bench (3 rows) -> planter -> bench (3 rows) -> planter. No walkway inside a column.
  */
 export const ISLANDS: IslandDef[] = [
-  { pod: 'A', x: 404, y: 68, cols: [[9, 10, 11], [12, 13, 14]] },
-  { pod: 'B', x: 684, y: 68, cols: [[15, 16, 17], [18, 19, 20]] },
-  { pod: 'C', x: 964, y: 68, cols: [[21, 22, 23], [24, 25, 26]] },
-  { pod: 'D', x: 404, y: 316, cols: [[33, 34, 35], [36, 37, 38]] },
-  { pod: 'E', x: 684, y: 316, cols: [[39, 40, 41], [42, 43, 44]] },
-  { pod: 'F', x: 964, y: 316, cols: [[45, 46, 47], [48, 49, 50]] },
+  { pod: 'A', x: 404, y: 60, cols: [[9, 10, 11], [12, 13, 14]] },
+  { pod: 'B', x: 684, y: 60, cols: [[15, 16, 17], [18, 19, 20]] },
+  { pod: 'C', x: 964, y: 60, cols: [[21, 22, 23], [24, 25, 26]] },
+  { pod: 'D', x: 404, y: 308, cols: [[33, 34, 35], [36, 37, 38]] },
+  { pod: 'E', x: 684, y: 308, cols: [[39, 40, 41], [42, 43, 44]] },
+  { pod: 'F', x: 964, y: 308, cols: [[45, 46, 47], [48, 49, 50]] },
 ]
 
 export const PLANTERS = [404, 684, 964].flatMap((x) => [
-  { x: x - 8, y: 250, w: 208, h: 60 },
-  { x: x - 8, y: 498, w: 208, h: 60 },
+  { x: x - 8, y: 242, w: 208, h: 60 },
+  { x: x - 8, y: 490, w: 208, h: 60 },
 ])
 
 /**
@@ -47,10 +49,10 @@ export const PLANTERS = [404, 684, 964].flatMap((x) => [
  * A|B and B|C on the north bank, D|E and E|F on the south bank.
  */
 export const WHITEBOARDS = [
-  { x: 640, y1: 84, y2: 228 },
-  { x: 920, y1: 84, y2: 228 },
-  { x: 640, y1: 332, y2: 476 },
-  { x: 920, y1: 332, y2: 476 },
+  { x: 640, y1: 76, y2: 220 },
+  { x: 920, y1: 76, y2: 220 },
+  { x: 640, y1: 324, y2: 468 },
+  { x: 920, y1: 324, y2: 468 },
 ]
 
 /** Rectangular ring of 8 axis-aligned desks. The centre stays open carpet. */
@@ -75,27 +77,27 @@ export const HEX_PLANTS = [
 ]
 
 /** Static shell layers, drawn behind the desks. */
-export const SLAB = { x: 20, y: 20, w: 1200, h: 680 }
+export const SLAB = { x: 20, y: 20, w: 1200, h: 564 }
 export const JOINT_STEP = 112
 
 export const CIRCULATION = [
-  { x: 344, y: 38, w: 44, h: 536 },
-  { x: 612, y: 38, w: 56, h: 536 },
-  { x: 892, y: 38, w: 56, h: 536 },
+  { x: 344, y: 38, w: 44, h: 520 },
+  { x: 612, y: 38, w: 56, h: 520 },
+  { x: 892, y: 38, w: 56, h: 520 },
 ]
-export const MAIN_ALLEY = { x: 20, y: 574, w: 1200, h: 126 }
+export const MAIN_ALLEY = { x: 20, y: 558, w: 1200, h: 26 }
 
 export const NORTH_WALL = { x: 20, y: 20, w: 1200, h: 18 }
-export const WEST_WALL = { x: 20, y: 38, w: 16, h: 342 }
-export const EAST_WALL = { x: 1204, y: 38, w: 16, h: 662 }
+export const WEST_WALL = { x: 20, y: 38, w: 16, h: 334 }
+export const EAST_WALL = { x: 1204, y: 38, w: 16, h: 546 }
 
 export const CARPET = { x: 36, y: 52, w: 308, h: 300 }
 
 export const VP_OFFICE = {
-  room: { x: 20, y: 380, w: 324, h: 178 },
-  desk: { x: 120, y: 512, w: 92, h: 44 },
-  chair: { cx: 166, cy: 496, r: 12 },
-  door: 'M344 522 A36 36 0 0 1 308 558',
+  room: { x: 20, y: 372, w: 324, h: 178 },
+  desk: { x: 120, y: 504, w: 92, h: 44 },
+  chair: { cx: 166, cy: 488, r: 12 },
+  door: 'M344 514 A36 36 0 0 1 308 550',
 }
 
 export interface Rect {
