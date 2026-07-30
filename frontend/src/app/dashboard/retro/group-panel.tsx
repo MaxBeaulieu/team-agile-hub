@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { buildGroupLabel, GROUP_LABEL_MAX } from '@/lib/retro-groups'
 import { toast } from 'sonner'
 import { Layers, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -135,10 +136,11 @@ function ColumnSection({
 }
 
 export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitator, onRefresh }: Props) {
-  const [selected, setSelected]   = useState<Set<string>>(new Set())
-  const [labelOpen, setLabelOpen] = useState(false)
-  const [label, setLabel]         = useState('')
-  const [grouping, setGrouping]   = useState(false)
+  const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [labelOpen, setLabelOpen]   = useState(false)
+  const [label, setLabel]           = useState('')
+  const [pendingIds, setPendingIds] = useState<string[]>([])
+  const [grouping, setGrouping]     = useState(false)
 
   const columns: string[] = JSON.parse(session.columnsJson)
 
@@ -153,23 +155,43 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
 
   function clearSelection() { setSelected(new Set()) }
 
+  // Pull in every card of an already-existing group when one of its members is
+  // selected, so a merge ends up with a single, accurate label.
+  function resolveGroupIds(): string[] {
+    const existingGroups = new Set(
+      cards.filter(c => selected.has(c.id) && c.groupId).map(c => c.groupId as string)
+    )
+    return cards
+      .filter(c => selected.has(c.id) || (c.groupId !== null && existingGroups.has(c.groupId)))
+      .map(c => c.id)
+  }
+
+  function openGroupDialog() {
+    const ids = resolveGroupIds()
+    setPendingIds(ids)
+    setLabel(buildGroupLabel(cards.filter(c => ids.includes(c.id)).map(c => c.content)))
+    setLabelOpen(true)
+  }
+
   async function groupSelected() {
-    if (selected.size < 2) return
+    if (pendingIds.length < 2) return
     setGrouping(true)
     try {
-      const trimmed = label.trim()
       // Assign all selected cards to the same groupId (first card's id)
-      const ids      = [...selected]
-      const groupId  = ids[0]
+      const groupId = pendingIds[0]
+      const groupLabel =
+        label.trim() ||
+        buildGroupLabel(cards.filter(c => pendingIds.includes(c.id)).map(c => c.content))
       await Promise.all(
-        ids.map(id =>
+        pendingIds.map(id =>
           api.patch(`/api/teams/${teamId}/retro/${session.id}/cards/${id}`, {
             groupId,
-            groupLabel: trimmed || null,
+            groupLabel: groupLabel || null,
           })
         )
       )
       setLabel('')
+      setPendingIds([])
       setLabelOpen(false)
       setSelected(new Set())
       onRefresh()
@@ -199,7 +221,7 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
                 Clear
               </Button>
               {selected.size >= 2 && (
-                <Button size="sm" className="h-7 text-xs gap-1.5" onClick={() => setLabelOpen(true)}>
+                <Button size="sm" className="h-7 text-xs gap-1.5" onClick={openGroupDialog}>
                   <Layers className="size-3" />
                   Group
                 </Button>
@@ -233,20 +255,24 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
       <Dialog open={labelOpen} onOpenChange={setLabelOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Group {selected.size} cards</DialogTitle>
+            <DialogTitle>Group {pendingIds.length} cards</DialogTitle>
           </DialogHeader>
           <div className="space-y-1.5 py-2">
             <label className="text-xs font-medium text-muted-foreground">
-              Group label (optional)
+              Group name — auto-built from the cards, edit if you like
             </label>
             <input
               value={label}
               onChange={e => setLabel(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') groupSelected() }}
               placeholder="e.g. Communication issues"
+              maxLength={GROUP_LABEL_MAX}
               autoFocus
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
             />
+            <p className="text-[11px] text-muted-foreground">
+              The group is voted on as a single item.
+            </p>
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" size="sm" onClick={() => setLabelOpen(false)}>Cancel</Button>
