@@ -71,8 +71,10 @@ public class RetroController(SupabaseService sb) : ControllerBase
             .Get()).Models.FirstOrDefault();
         if (session is null) return null;
 
+        if (!session.SprintId.HasValue) return null;
+
         var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id",      Operator.Equals, session.SprintId.ToString())
+            .Filter("id",      Operator.Equals, session.SprintId.Value.ToString())
             .Filter("team_id", Operator.Equals, teamId.ToString())
             .Get()).Models.FirstOrDefault();
 
@@ -110,6 +112,7 @@ public class RetroController(SupabaseService sb) : ControllerBase
 
         var session = new RetroSession
         {
+            Name                   = sprint.Name,
             SprintId               = sprintId,
             FacilitatorId          = CurrentUserId,
             ColumnsJson            = req.ColumnsJson ?? """["Went Well","Improve","Learnings","Questions"]""",
@@ -528,10 +531,12 @@ public class RetroController(SupabaseService sb) : ControllerBase
 
         var session = await GetSessionById(teamId, id);
         if (session is null) return NotFound();
+        if (!session.SprintId.HasValue)
+            return BadRequest("Retro session is not attached to a sprint.");
 
         var item = new ActionItem
         {
-            SprintId   = session.SprintId,
+            SprintId   = session.SprintId.Value,
             Type       = ActionItemType.Retro,
             AssigneeId = req.AssigneeId,
             Text       = req.Text.Trim(),
