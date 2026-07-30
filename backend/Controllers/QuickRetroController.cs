@@ -11,6 +11,9 @@ namespace Backend.Controllers;
 [Authorize]
 public class QuickRetroController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
 {
+    // Matches the MaxLength on RetroSession.IcebreakerQuestion.
+    private const int MaxIcebreakerLength = 500;
+
     private Guid CurrentUserId => RetroParticipantService.UserIdOf(User);
 
     private static readonly RetroPhase[] PhaseOrder =
@@ -379,11 +382,26 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     }
 
     // POST api/quickretro/{id}/icebreaker/roll
+    // With a `question` in the body the facilitator sets their own wording; the
+    // custom text lives on the session only, it is not added to the icebreakers
+    // library.
     [HttpPost("api/quickretro/{id:guid}/icebreaker/roll")]
-    public async Task<IActionResult> RollIcebreaker(Guid id)
+    public async Task<IActionResult> RollIcebreaker(
+        Guid id, [FromBody] RollIcebreakerRequest? req = null)
     {
         var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
+
+        var custom = req?.Question?.Trim();
+        if (!string.IsNullOrEmpty(custom))
+        {
+            if (custom.Length > MaxIcebreakerLength)
+                return BadRequest($"Question must be {MaxIcebreakerLength} characters or fewer.");
+
+            session.IcebreakerQuestion = custom;
+            await sb.Db.From<RetroSession>().Update(session);
+            return Ok(new { question = custom, category = "custom" });
+        }
 
         var pick = await PickIcebreakerAsync(session.IcebreakerQuestion);
         if (pick is null) return BadRequest("No icebreakers available.");

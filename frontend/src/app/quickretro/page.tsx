@@ -20,6 +20,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  ColumnTemplatePicker,
+  parseColumns,
+} from "@/components/retro/column-template-picker";
 
 type RetroPhase =
   | "CheckIn"
@@ -55,6 +59,11 @@ function fmtDate(value: string) {
     month: "short",
     day: "2-digit",
   });
+}
+
+// Shown greyed out in the name field and used as-is when nothing is typed.
+function defaultRetroName() {
+  return `Retro ${new Date().toLocaleDateString("en-CA")}`;
 }
 
 export default function QuickRetroListPage() {
@@ -99,18 +108,11 @@ export default function QuickRetroListPage() {
   }, [load]);
 
   async function createRetro() {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      toast.error("Retro name is required");
-      return;
-    }
+    const trimmed = name.trim() || defaultRetroName();
 
     setCreating(true);
     try {
-      const cols = columns
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
+      const cols = parseColumns(columns);
       const created = await api.post<QuickRetroSession>("/api/quickretro", {
         name: trimmed,
         columnsJson: JSON.stringify(cols),
@@ -224,21 +226,12 @@ export default function QuickRetroListPage() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Retro 2026-07-30"
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
+                placeholder={defaultRetroName()}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-primary"
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Columns (comma-separated)
-              </label>
-              <input
-                value={columns}
-                onChange={(e) => setColumns(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
+            <ColumnTemplatePicker value={columns} onChange={setColumns} />
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
