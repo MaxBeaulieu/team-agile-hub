@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { groupCards } from '@/lib/retro-groups'
 import { toast } from 'sonner'
 import { CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -164,19 +165,16 @@ export function WrapUpPanel({
       {cards.length > 0 && (
         <div className="space-y-2">
           <p className="text-sm font-semibold">Top Voted Cards</p>
-          {[...cards]
-            .sort((a, b) => {
-              const va = a.retro_votes.reduce((s, v) => s + v.count, 0)
-              const vb = b.retro_votes.reduce((s, v) => s + v.count, 0)
-              return vb - va
-            })
+          {groupCards(cards)
+            .sort((a, b) => b.totalVotes - a.totalVotes)
             .slice(0, 5)
-            .map(card => {
-              const votes = card.retro_votes.reduce((s, v) => s + v.count, 0)
+            .map(group => {
+              const votes  = group.totalVotes
+              const anchor = group.cards.find(c => c.id === group.anchorId) ?? group.cards[0]
               return (
-                <div key={card.id} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
+                <div key={group.key} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {card.isDiscussed
+                    {group.cards.every(c => c.isDiscussed)
                       ? <CheckCircle2 className="size-3.5 text-primary" />
                       : <div className="size-3.5 rounded-full border border-border" />
                     }
@@ -185,8 +183,13 @@ export function WrapUpPanel({
                     </span>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground font-medium">{card.column}</p>
-                    <p className="text-sm leading-snug">{card.content}</p>
+                    <p className="text-xs text-muted-foreground font-medium">{anchor.column}</p>
+                    {group.isGroup && group.label && (
+                      <p className="text-sm font-semibold leading-snug">{group.label}</p>
+                    )}
+                    {group.cards.map(card => (
+                      <p key={card.id} className="text-sm leading-snug">{card.content}</p>
+                    ))}
                   </div>
                 </div>
               )

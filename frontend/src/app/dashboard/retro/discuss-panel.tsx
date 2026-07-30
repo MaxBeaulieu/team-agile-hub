@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { api } from '@/lib/api'
+import { groupVotesByCardId } from '@/lib/retro-groups'
 import { toast } from 'sonner'
 import { CheckCircle2, ChevronRight, Circle, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -143,7 +144,7 @@ function ActionItemCreator({
 
 // A highlighted discussion card (the "spotlight" card)
 function DiscussionCard({
-  card, isActive, isFacilitator, session, teamMembers, teamId, onRefresh, onSetActive,
+  card, isActive, isFacilitator, session, teamMembers, teamId, totalVotes, onRefresh, onSetActive,
 }: {
   card: RetroCard
   isActive: boolean
@@ -151,6 +152,7 @@ function DiscussionCard({
   session: RetroSession
   teamMembers: TeamMemberData[]
   teamId: string
+  totalVotes: number
   onRefresh: () => void
   onSetActive: (cardId: string) => void
 }) {
@@ -170,8 +172,6 @@ function DiscussionCard({
       setMarking(false)
     }
   }
-
-  const totalVotes = card.retro_votes.reduce((a, v) => a + v.count, 0)
 
   return (
     <div
@@ -277,12 +277,16 @@ export function DiscussPanel({
     }
   }
 
-  // Sort: not-discussed by votes desc, then discussed
+  // Votes belong to the group a card sits in, not to the individual card
+  const groupVotes = groupVotesByCardId(cards)
+  const groupKeyOf = (c: RetroCard) => c.groupId ?? c.id
+
+  // Sort: not-discussed by votes desc, then discussed — grouped cards stay together
   const sorted = [...cards].sort((a, b) => {
     if (a.isDiscussed !== b.isDiscussed) return a.isDiscussed ? 1 : -1
-    const va = a.retro_votes.reduce((s, v) => s + v.count, 0)
-    const vb = b.retro_votes.reduce((s, v) => s + v.count, 0)
-    return vb - va
+    const diff = (groupVotes[b.id] ?? 0) - (groupVotes[a.id] ?? 0)
+    if (diff !== 0) return diff
+    return groupKeyOf(a).localeCompare(groupKeyOf(b))
   })
 
   const discussedCount = cards.filter(c => c.isDiscussed).length
@@ -322,6 +326,7 @@ export function DiscussPanel({
             session={session}
             teamMembers={teamMembers}
             teamId={teamId}
+            totalVotes={groupVotes[card.id] ?? 0}
             onRefresh={onRefresh}
             onSetActive={setActiveCard}
           />
