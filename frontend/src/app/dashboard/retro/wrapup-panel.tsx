@@ -28,6 +28,13 @@ type Props = {
   onRefresh: () => void
 }
 
+// Action items sharing a card are rendered together, with the card shown once.
+type ActionItemGroup = {
+  key: string
+  card: RetroCard | null
+  items: ActionItemData[]
+}
+
 function MoodSummary({ moodCheckins, label }: { moodCheckins: MoodCheckin[], label: string }) {
   const moods = moodCheckins
     .map(m => label === 'entry' ? m.entryMood : m.exitMood)
@@ -93,6 +100,18 @@ export function WrapUpPanel({
   const exitCheckedCount = moodCheckins.filter(m => m.exitMood !== null).length
   const totalMembers     = teamMembers.length
 
+  // Action items grouped by the card they came from, so a card with several
+  // items reads as one row instead of repeating the card (EE-160).
+  const cardById = new Map(cards.map(c => [c.id, c]))
+  const actionGroups = actionItems.reduce<ActionItemGroup[]>((acc, item) => {
+    const card     = item.retroCardId ? cardById.get(item.retroCardId) ?? null : null
+    const key      = card?.id ?? 'unlinked'
+    const existing = acc.find(g => g.key === key)
+    if (existing) existing.items.push(item)
+    else acc.push({ key, card, items: [item] })
+    return acc
+  }, [])
+
   // Once the retro is completed this panel is a read-only recap — no more input.
   const isCompleted = session.phase === 'Completed'
 
@@ -146,12 +165,35 @@ export function WrapUpPanel({
       </div>
 
       {/* Action items */}
-      {actionItems.length > 0 && (
-        <div className="space-y-2">
+      {actionGroups.length > 0 && (
+        <div className="@container space-y-2">
           <p className="text-sm font-semibold">Action Items</p>
-          <div className="rounded-lg border border-border bg-card px-3 py-2.5">
-            <CardActionItems items={actionItems} teamMembers={teamMembers} />
-          </div>
+          {actionGroups.map(group => (
+            <div
+              key={group.key}
+              className="flex flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2.5 @sm:flex-row @sm:items-start"
+            >
+              <CardActionItems
+                items={group.items}
+                teamMembers={teamMembers}
+                className="flex-1 min-w-0"
+              />
+              <div className="shrink-0 border-t border-border pt-2 @sm:w-40 @sm:border-t-0 @sm:border-l @sm:pl-3 @sm:pt-0">
+                {group.card ? (
+                  <>
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {group.card.column}
+                    </p>
+                    <p className="text-[11px] leading-snug text-muted-foreground break-words line-clamp-3">
+                      {group.card.content}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[11px] italic text-muted-foreground">Not linked to a card</p>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
