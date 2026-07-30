@@ -140,8 +140,7 @@ function PhaseProgressBar({ session }: { session: RetroSession }) {
   // Check-In only exists to collect entry moods, so it disappears from the
   // progress bar when the retro opted out of them (EE-165).
   const phases = PHASE_ORDER.filter(
-    (p) =>
-      p !== "Completed" && !(p === "CheckIn" && session.skipMoodCheckins),
+    (p) => p !== "Completed" && !(p === "CheckIn" && session.skipMoodCheckins),
   );
   const current =
     session.phase === "Completed"
