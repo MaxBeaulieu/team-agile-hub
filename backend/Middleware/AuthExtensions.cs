@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
@@ -10,17 +11,18 @@ public static class AuthExtensions
         this IServiceCollection services,
         IConfiguration config)
     {
-        var supabaseUrl = config["Supabase:Url"]
-            ?? throw new InvalidOperationException("Supabase:Url is required");
+        var supabaseUrl = config["Supabase:Url"];
+        var jwtSecret = config["Supabase:JwtSecret"];
 
-        var authority = $"{supabaseUrl.TrimEnd('/')}/auth/v1";
+        if (string.IsNullOrWhiteSpace(supabaseUrl) && string.IsNullOrWhiteSpace(jwtSecret))
+        {
+            throw new InvalidOperationException(
+                "Supabase auth is not configured. Set Supabase:Url (preferred) or Supabase:JwtSecret.");
+        }
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
-                options.Authority        = authority;
-                options.MetadataAddress  = $"{authority}/.well-known/openid-configuration";
-                options.RequireHttpsMetadata = true;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
@@ -29,6 +31,22 @@ public static class AuthExtensions
                     ValidateLifetime         = true,
                     NameClaimType            = ClaimTypes.NameIdentifier,
                 };
+
+                if (!string.IsNullOrWhiteSpace(supabaseUrl))
+                {
+                    var authority = $"{supabaseUrl.TrimEnd('/')}/auth/v1";
+                    options.Authority = authority;
+                    options.MetadataAddress = $"{authority}/.well-known/openid-configuration";
+                    options.RequireHttpsMetadata =
+                        authority.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    options.RequireHttpsMetadata = false;
+                    options.TokenValidationParameters.IssuerSigningKey =
+                        new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret!));
+                }
+
                 options.Events = new JwtBearerEvents
                 {
                     OnAuthenticationFailed = ctx =>

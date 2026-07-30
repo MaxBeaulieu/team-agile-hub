@@ -44,6 +44,14 @@ dotnet run
 cd frontend
 cp .env.example .env.local
 # Fill in .env.local with your Supabase URL and anon key
+
+# Sanity check: confirm Node and npm are available
+node -v
+npm -v
+
+# If you use Volta and npm is not recognized:
+volta install node@20
+
 npm run dev
 # App runs at http://localhost:3000
 ```
