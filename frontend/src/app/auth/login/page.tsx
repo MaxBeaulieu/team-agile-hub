@@ -21,10 +21,15 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError(error.message)
-    else router.push('/dashboard')
-    setLoading(false)
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) setError(error.message)
+      else router.push('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to reach Supabase. Check your network and env config.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleOAuth = async (provider: 'google' | 'github') => {

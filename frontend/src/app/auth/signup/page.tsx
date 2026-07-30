@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { ThemeSwitcher } from '@/components/ui/theme-switcher'
 import { GitBranch, Mail } from 'lucide-react'
 
@@ -16,21 +15,25 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
   const supabase = createClient()
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: name } },
-    })
-    if (error) setError(error.message)
-    else setSuccess(true)
-    setLoading(false)
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: name } },
+      })
+      if (error) setError(error.message)
+      else setSuccess(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to reach Supabase. Check your network and env config.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleOAuth = async (provider: 'google' | 'github') => {
