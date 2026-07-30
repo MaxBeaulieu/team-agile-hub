@@ -4,20 +4,17 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using static Postgrest.Constants;
-using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class QuickRetroController(SupabaseService sb) : ControllerBase
+public class QuickRetroController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
 {
     // Matches the MaxLength on RetroSession.IcebreakerQuestion.
     private const int MaxIcebreakerLength = 500;
 
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
+    private Guid CurrentUserId => RetroParticipantService.UserIdOf(User);
 
     private static readonly RetroPhase[] PhaseOrder =
     [
@@ -27,38 +24,31 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     ];
 
     /// <summary>
-    /// Loads a personal (sprint-less) retro session owned by the current user.
-    /// Sprint/team retros are deliberately excluded from this surface: they can
-    /// contain other members' cards, and this flow reports a single participant.
-    /// They stay reachable through the dashboard retro endpoints.
+    /// Loads a sprint-less retro session the current user may take part in:
+    /// its facilitator, or anyone who joined through the invite link.
+    /// Sprint/team retros are deliberately excluded from this surface — they
+    /// stay reachable through the dashboard retro endpoints.
     /// </summary>
-    private async Task<RetroSession?> GetOwnedSession(Guid sessionId)
+    private async Task<RetroSession?> GetAccessibleSession(Guid sessionId)
     {
         var session = (await sb.Db.From<RetroSession>()
             .Filter("id", Operator.Equals, sessionId.ToString())
-            .Filter("facilitator_id", Operator.Equals, CurrentUserId.ToString())
             .Get()).Models.FirstOrDefault();
 
         if (session is null || session.SprintId.HasValue) return null;
-        return session;
+
+        if (session.FacilitatorId == CurrentUserId) return session;
+
+        return await participants.IsParticipantAsync(session.Id, CurrentUserId)
+            ? session
+            : null;
     }
 
-    private TeamMember CurrentUserAsParticipant(DateTime joinedAt)
+    /// <summary>Host-only actions (phase, speaker, icebreaker, discussion focus).</summary>
+    private async Task<RetroSession?> GetFacilitatedSession(Guid sessionId)
     {
-        var fallbackName = User.FindFirstValue("email")?.Split('@')[0] ?? "You";
-        var displayName = User.FindFirstValue("name")
-            ?? User.FindFirstValue("preferred_username")
-            ?? fallbackName;
-
-        return new TeamMember
-        {
-            Id = CurrentUserId,
-            TeamId = Guid.Empty,
-            UserId = CurrentUserId,
-            DisplayName = displayName,
-            Role = TeamRole.Admin,
-            JoinedAt = joinedAt,
-        };
+        var session = await GetAccessibleSession(sessionId);
+        return session?.FacilitatorId == CurrentUserId ? session : null;
     }
 
     private static RetroPhase NextPhase(RetroPhase current)
@@ -108,8 +98,10 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpGet("api/quickretro/{id:guid}")]
     public async Task<IActionResult> GetQuickRetro(Guid id)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
+
+        await participants.EnsureParticipantAsync(session, User);
 
         var allCards = (await sb.Db.From<RetroCard>()
             .Select("*, retro_votes(*)")
@@ -117,9 +109,8 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
             .Order("created_at", Ordering.Ascending)
             .Get()).Models;
 
-        // Personal retros only ever contain the owner's cards, so these guards
-        // are no-ops today. They are kept so this endpoint stays correct if the
-        // session scope is ever widened (e.g. shared/anonymous join).
+        // Guests joining through the invite link share the board, so unrevealed
+        // cards written by someone else stay hidden until the Group phase.
         var visibleCards = allCards
             .Where(c => c.IsRevealed || c.AuthorId == CurrentUserId)
             .ToList();
@@ -139,8 +130,6 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
             .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
             .Get()).Models;
 
-        var participant = CurrentUserAsParticipant(session.CreatedAt);
-
         var actionItems = (await sb.Db.From<ActionItem>()
             .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
             .Order("created_at", Ordering.Ascending)
@@ -148,13 +137,16 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
 
         return Ok(new
         {
-            Session = session,
-            Cards = visibleCards,
+            Session      = session,
+            Cards        = visibleCards,
             HiddenCounts = hiddenCounts,
             MoodCheckins = moodCheckins,
-            TeamMembers = new List<TeamMember> { participant },
-            ActionItems = actionItems,
-            RetroName = session.Name,
+            // Quick retros have no team; the roster comes entirely from
+            // retro_participants.
+            TeamMembers  = new List<TeamMember>(),
+            ActionItems  = actionItems,
+            Participants = await participants.GetParticipantsAsync(session.Id),
+            RetroName    = session.Name,
         });
     }
 
@@ -162,7 +154,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPost("api/quickretro/{id:guid}/advance")]
     public async Task<IActionResult> AdvancePhase(Guid id)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
         if (session.Phase == RetroPhase.Completed) return BadRequest("Retro is already completed.");
 
@@ -170,9 +162,9 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
 
         if (session.Phase == RetroPhase.CheckIn && next == RetroPhase.Icebreaker)
         {
-            var order = new List<string> { CurrentUserId.ToString() };
+            var order = await participants.BuildSpeakerOrderAsync(session, null);
             session.SpeakerOrderJson = JsonConvert.SerializeObject(order);
-            session.CurrentSpeakerId = CurrentUserId;
+            session.CurrentSpeakerId = order.Any() ? Guid.Parse(order[0]) : null;
 
             var icebreakers = (await sb.Db.From<Icebreaker>().Get()).Models;
             if (icebreakers.Any())
@@ -200,7 +192,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPost("api/quickretro/{id:guid}/cards")]
     public async Task<IActionResult> AddCard(Guid id, [FromBody] QuickAddCardRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (session.Phase != RetroPhase.Write) return BadRequest("Cards can only be added during the Write phase.");
         if (string.IsNullOrWhiteSpace(req.Content)) return BadRequest("Content is required.");
@@ -228,7 +220,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPatch("api/quickretro/{id:guid}/cards/{cardId:guid}")]
     public async Task<IActionResult> UpdateCard(Guid id, Guid cardId, [FromBody] QuickUpdateCardRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
 
         var card = (await sb.Db.From<RetroCard>()
@@ -262,7 +254,12 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
         }
 
         if (req.IsDiscussed.HasValue)
+        {
+            // Marking a card discussed is a facilitation control, not a
+            // participant action.
+            if (session.FacilitatorId != CurrentUserId) return Forbid();
             card.IsDiscussed = req.IsDiscussed.Value;
+        }
 
         await sb.Db.From<RetroCard>().Update(card);
         return Ok(card);
@@ -272,7 +269,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpDelete("api/quickretro/{id:guid}/cards/{cardId:guid}")]
     public async Task<IActionResult> DeleteCard(Guid id, Guid cardId)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (session.Phase != RetroPhase.Write)
             return BadRequest("Cards can only be deleted during the Write phase.");
@@ -294,7 +291,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPut("api/quickretro/{id:guid}/votes")]
     public async Task<IActionResult> UpsertVotes(Guid id, [FromBody] List<QuickVoteEntry> req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (session.Phase != RetroPhase.Vote)
             return BadRequest("Voting is only allowed during the Vote phase.");
@@ -335,7 +332,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPost("api/quickretro/{id:guid}/mood")]
     public async Task<IActionResult> SubmitMood(Guid id, [FromBody] QuickMoodRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
 
         var existing = (await sb.Db.From<MoodCheckin>()
@@ -370,7 +367,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> RollIcebreaker(
         Guid id, [FromBody] RollIcebreakerRequest? req = null)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
 
         var custom = req?.Question?.Trim();
@@ -400,7 +397,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPatch("api/quickretro/{id:guid}/speaker")]
     public async Task<IActionResult> AdvanceSpeaker(Guid id, [FromBody] QuickAdvanceSpeakerRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
 
         if (req.SpeakerId.HasValue)
@@ -429,7 +426,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPatch("api/quickretro/{id:guid}/discuss")]
     public async Task<IActionResult> SetActiveDiscussion(Guid id, [FromBody] QuickSetDiscussRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
 
         session.ActiveDiscussionCardId = req.CardId;
@@ -441,7 +438,7 @@ public class QuickRetroController(SupabaseService sb) : ControllerBase
     [HttpPost("api/quickretro/{id:guid}/action-items")]
     public async Task<IActionResult> CreateActionItem(Guid id, [FromBody] QuickCreateActionItemRequest req)
     {
-        var session = await GetOwnedSession(id);
+        var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest("Text is required.");
 

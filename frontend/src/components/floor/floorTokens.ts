@@ -41,6 +41,19 @@ export const tokens = {
   oosEdge: '#D3762F',
   oosInk: '#9C5A22',
 
+  kitOn: '#3F8A4B',
+  kitOff: '#B23A2F',
+
+  /* Seat action bar — a cool slate band so it never reads as part of the
+     warm, paper-toned filter toolbar above it. */
+  actionBg: '#E6EFF5',
+  actionEdge: '#AEC6D6',
+  actionAccent: '#1F5C7A',
+  actionInk: '#17384A',
+  actionInk2: '#4A6E83',
+  actionInk3: '#7C97A8',
+  actionSurface: '#F8FBFD',
+
   eastWall: '#E0DCD3',
   office: '#EAE7E0',
   surface: '#FFFFFF',
@@ -65,7 +78,6 @@ export const opacities = {
   carpet: 0.62,
   spine: 0.5,
   teamFill: 0.2,
-  dimmed: 0.2,
 } as const
 
 /** Teams come from the database, so their colours are derived rather than
@@ -112,6 +124,15 @@ export const floorCssVars: Record<string, string> = {
   '--fp-oos': tokens.oosFill,
   '--fp-oos-edge': tokens.oosEdge,
   '--fp-oos-ink': tokens.oosInk,
+  '--fp-kit-on': tokens.kitOn,
+  '--fp-kit-off': tokens.kitOff,
+  '--fp-act-bg': tokens.actionBg,
+  '--fp-act-edge': tokens.actionEdge,
+  '--fp-act-accent': tokens.actionAccent,
+  '--fp-act-ink': tokens.actionInk,
+  '--fp-act-ink-2': tokens.actionInk2,
+  '--fp-act-ink-3': tokens.actionInk3,
+  '--fp-act-surface': tokens.actionSurface,
   '--fp-east-wall': tokens.eastWall,
   '--fp-office': tokens.office,
   '--fp-planter': tokens.planter,
@@ -127,5 +148,4 @@ export const floorCssVars: Record<string, string> = {
   '--fp-op-chair': String(opacities.chair),
   '--fp-op-carpet': String(opacities.carpet),
   '--fp-op-spine': String(opacities.spine),
-  '--fp-op-dim': String(opacities.dimmed),
 }

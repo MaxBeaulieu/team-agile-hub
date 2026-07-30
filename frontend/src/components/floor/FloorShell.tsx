@@ -17,9 +17,9 @@ import { tokens } from './floorTokens'
 function Joints() {
   const lines = []
   for (let x = 132; x < 1220; x += JOINT_STEP) {
-    lines.push(<line key={`v${x}`} x1={x} y1={38} x2={x} y2={700} />)
+    lines.push(<line key={`v${x}`} x1={x} y1={38} x2={x} y2={SLAB.y + SLAB.h} />)
   }
-  for (let y = 150; y < 700; y += JOINT_STEP) {
+  for (let y = 150; y < SLAB.y + SLAB.h; y += JOINT_STEP) {
     lines.push(<line key={`h${y}`} x1={36} y1={y} x2={1220} y2={y} />)
   }
   return <g className="fp-joint">{lines}</g>
@@ -104,7 +104,7 @@ export function FloorShell() {
         className="fp-wall-east"
       />
 
-      <text x={620} y={648} textAnchor="middle" className="fp-zlabel">
+      <text x={620} y={575} textAnchor="middle" className="fp-zlabel">
         MAIN ALLEY
       </text>
 
@@ -139,10 +139,10 @@ export function FloorShell() {
         r={VP_OFFICE.chair.r}
         className="fp-chair"
       />
-      <text x={38} y={412} className="fp-plabel">
+      <text x={38} y={404} className="fp-plabel">
         #51 · VP OFFICE
       </text>
-      <text x={38} y={428} className="fp-zlabel">
+      <text x={38} y={420} className="fp-zlabel">
         not bookable
       </text>
 
