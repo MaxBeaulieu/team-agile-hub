@@ -62,19 +62,37 @@ function NotesEditor({
     setSaving(true);
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await api.patch(`/api/quickretro/${session.id}/cards/${card.id}`, {
-          discussionNotes: val,
-        });
-        onRefresh();
-      } catch {
-        /* ignore transient save errors */
-      } finally {
-        setSaving(false);
-      }
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      void save(val);
     }, 700);
   }
+
+  async function save(value: string) {
+    try {
+      await api.patch(`/api/quickretro/${session.id}/cards/${card.id}`, {
+        discussionNotes: value,
+      });
+      onRefresh();
+    } catch {
+      /* ignore transient save errors */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // The editor unmounts as soon as the facilitator moves the spotlight or
+  // advances the phase, which used to drop whatever the debounce still held.
+  const flush = useRef<() => void>(() => {});
+  useEffect(() => {
+    flush.current = () => {
+      if (!saveTimer.current) return;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      void save(notes);
+    };
+  });
+  useEffect(() => () => flush.current(), []);
 
   return (
     <textarea

@@ -83,14 +83,6 @@ export type MoodCheckin = {
   exitMood: number | null;
 };
 
-export type TeamMemberData = {
-  id: string;
-  userId: string;
-  displayName: string;
-  role: string;
-  joinedAt: string;
-};
-
 export type ActionItemData = {
   id: string;
   sprintId: string | null;
@@ -109,11 +101,9 @@ export type RetroData = {
   cards: RetroCard[];
   hiddenCounts: Record<string, number>;
   moodCheckins: MoodCheckin[];
-  teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
   participants: RetroParticipantData[];
   finishedVotingUserIds: string[];
-  retroName: string;
 };
 
 const PHASE_ORDER: RetroPhase[] = [
@@ -290,11 +280,9 @@ function FacilitatorBar({
 }
 
 function RetroHeader({
-  retroName,
   session,
   showBackLink,
 }: {
-  retroName: string;
   session: RetroSession;
   showBackLink: boolean;
 }) {
@@ -310,7 +298,7 @@ function RetroHeader({
           </Link>
         )}
         <div>
-          <h1 className="text-sm font-semibold">{retroName} — Retro</h1>
+          <h1 className="text-sm font-semibold">{session.name} — Retro</h1>
           <PhaseProgressBar session={session} />
         </div>
       </div>
@@ -324,7 +312,7 @@ function RetroInner({ retroId }: { retroId: string }) {
   const [notFound, setNotFound] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const load = useCallback(async () => {
     try {
@@ -332,7 +320,9 @@ function RetroInner({ retroId }: { retroId: string }) {
       setData(result);
       setNotFound(false);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes("404")) {
+      // `api` throws `API <status>: <body>`; match the status, not any 404 that
+      // happens to appear in the message.
+      if (err instanceof Error && err.message.startsWith("API 404")) {
         setNotFound(true);
         setData(null);
       } else {
@@ -347,7 +337,7 @@ function RetroInner({ retroId }: { retroId: string }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user.id) setCurrentUserId(session.user.id);
     });
-  }, [supabase.auth]);
+  }, [supabase]);
 
   useEffect(() => {
     load();
@@ -473,10 +463,8 @@ function RetroInner({ retroId }: { retroId: string }) {
     cards,
     hiddenCounts,
     moodCheckins,
-    teamMembers,
     actionItems,
     finishedVotingUserIds,
-    retroName,
   } = data;
   const isFacilitator = session.facilitatorId === currentUserId;
 
@@ -500,7 +488,6 @@ function RetroInner({ retroId }: { retroId: string }) {
     cards,
     hiddenCounts,
     moodCheckins,
-    teamMembers,
     actionItems: actionItems ?? [],
     roster,
     participants,
@@ -511,11 +498,7 @@ function RetroInner({ retroId }: { retroId: string }) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <RetroHeader
-        retroName={retroName}
-        session={session}
-        showBackLink={isFacilitator}
-      />
+      <RetroHeader session={session} showBackLink={isFacilitator} />
 
       <ParticipantsBar
         sessionId={session.id}

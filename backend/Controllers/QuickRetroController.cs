@@ -11,8 +11,25 @@ namespace Backend.Controllers;
 [Authorize]
 public class QuickRetroController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
 {
-    // Matches the MaxLength on RetroSession.IcebreakerQuestion.
-    private const int MaxIcebreakerLength = 500;
+    // The [MaxLength] attributes on the models are documentation only: Postgrest
+    // doesn't enforce them and the underlying columns are `text`, so anything a
+    // client sends is stored verbatim unless it is checked here.
+    private const int MaxNameLength       = 120;   // RetroSession.Name
+    private const int MaxIcebreakerLength = 500;   // RetroSession.IcebreakerQuestion
+    private const int MaxCardLength       = 1000;  // RetroCard.Content
+    private const int MaxColumnLength     = 50;    // RetroCard.Column
+    private const int MaxGroupLabelLength = 100;   // RetroCard.GroupLabel
+    private const int MaxNotesLength      = 4000;  // RetroCard.DiscussionNotes
+    private const int MaxActionItemLength = 500;   // ActionItem.Text
+
+    /// <summary>Kept in step with MAX_TEMPLATE_COLUMNS on the client.</summary>
+    private const int MaxColumns = 8;
+
+    private const int MaxVoteCount = 20;
+    private const int MinMood = 1;
+    private const int MaxMood = 5;
+
+    private const string DefaultColumnsJson = """["Went Well","Improve","Learnings","Questions"]""";
 
     private Guid CurrentUserId => RetroParticipantService.UserIdOf(User);
 
@@ -77,9 +94,92 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     }
 
     private static List<string> ReadSpeakerOrder(RetroSession session) =>
-        session.SpeakerOrderJson is null
-            ? []
-            : JsonConvert.DeserializeObject<List<string>>(session.SpeakerOrderJson) ?? [];
+        ReadStringArray(session.SpeakerOrderJson);
+
+    private static List<string> ReadColumns(RetroSession session) =>
+        ReadStringArray(session.ColumnsJson);
+
+    /// <summary>Reads a JSON array column without letting bad data throw a 500.</summary>
+    private static List<string> ReadStringArray(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return JsonConvert.DeserializeObject<List<string>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Validates the board columns a client asked for and hands back their
+    /// canonical JSON. A retro whose <c>columns_json</c> is empty or unparsable
+    /// renders as a blank, unusable board (and crashes the client's
+    /// <c>JSON.parse</c>), so it must never reach the database.
+    /// </summary>
+    private static bool TryNormalizeColumns(string json, out string normalized, out string error)
+    {
+        normalized = string.Empty;
+        error      = string.Empty;
+
+        List<string?>? columns;
+        try
+        {
+            columns = JsonConvert.DeserializeObject<List<string?>>(json);
+        }
+        catch (JsonException)
+        {
+            columns = null;
+        }
+
+        if (columns is null)
+        {
+            error = "Columns must be a JSON array of column names.";
+            return false;
+        }
+
+        var cleaned = columns
+            .Select(c => c?.Trim() ?? string.Empty)
+            .Where(c => c.Length > 0)
+            .ToList();
+
+        if (cleaned.Count == 0)
+        {
+            error = "A retro needs at least one column.";
+            return false;
+        }
+        if (cleaned.Count > MaxColumns)
+        {
+            error = $"A retro can have at most {MaxColumns} columns.";
+            return false;
+        }
+        if (cleaned.Any(c => c.Length > MaxColumnLength))
+        {
+            error = $"Column names must be {MaxColumnLength} characters or fewer.";
+            return false;
+        }
+        if (cleaned.Distinct(StringComparer.OrdinalIgnoreCase).Count() != cleaned.Count)
+        {
+            error = "Column names must be unique.";
+            return false;
+        }
+
+        normalized = JsonConvert.SerializeObject(cleaned);
+        return true;
+    }
+
+    /// <summary>Ids of every card on the board, for "does this id belong here?" checks.</summary>
+    private async Task<HashSet<Guid>> GetCardIdsAsync(Guid sessionId) =>
+        (await sb.Db.From<RetroCard>()
+            .Select("id")
+            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
+            .Get()).Models
+            .Select(c => c.Id)
+            .ToHashSet();
+
+    private static bool IsValidMood(int? mood) => mood is null or (>= MinMood and <= MaxMood);
 
     // GET api/quickretro
     [HttpGet("api/quickretro")]
@@ -99,16 +199,26 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     [HttpPost("api/quickretro")]
     public async Task<IActionResult> CreateQuickRetro([FromBody] QuickCreateRetroRequest req)
     {
-        if (string.IsNullOrWhiteSpace(req.Name))
+        var name = req.Name?.Trim();
+        if (string.IsNullOrEmpty(name))
             return BadRequest("Retro name is required.");
+        if (name.Length > MaxNameLength)
+            return BadRequest($"Retro name must be {MaxNameLength} characters or fewer.");
+
+        if (!TryNormalizeColumns(req.ColumnsJson ?? DefaultColumnsJson, out var columnsJson, out var columnsError))
+            return BadRequest(columnsError);
+
+        var voteCount = req.VoteCount ?? 5;
+        if (voteCount < 1 || voteCount > MaxVoteCount)
+            return BadRequest($"Votes per person must be between 1 and {MaxVoteCount}.");
 
         var session = new RetroSession
         {
-            Name = req.Name.Trim(),
+            Name = name,
             SprintId = null,
             FacilitatorId = CurrentUserId,
-            ColumnsJson = req.ColumnsJson ?? """["Went Well","Improve","Learnings","Questions"]""",
-            VoteCount = req.VoteCount ?? 5,
+            ColumnsJson = columnsJson,
+            VoteCount = voteCount,
             HideVotesUntilRevealed = req.HideVotesUntilRevealed ?? false,
             SkipMoodCheckins = req.SkipMoodCheckins ?? false,
             SkipIcebreaker = req.SkipIcebreaker ?? false,
@@ -188,13 +298,11 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             Cards        = visibleCards,
             HiddenCounts = hiddenCounts,
             MoodCheckins = moodCheckins,
+            ActionItems  = actionItems,
             // Quick retros have no team; the roster comes entirely from
             // retro_participants.
-            TeamMembers  = new List<TeamMember>(),
-            ActionItems  = actionItems,
             Participants = await participants.GetParticipantsAsync(session.Id),
             FinishedVotingUserIds = finishedVotingUserIds,
-            RetroName    = session.Name,
         });
     }
 
@@ -239,20 +347,24 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (session.Phase != RetroPhase.Write) return BadRequest("Cards can only be added during the Write phase.");
-        if (string.IsNullOrWhiteSpace(req.Content)) return BadRequest("Content is required.");
+
+        var content = req.Content?.Trim();
+        if (string.IsNullOrEmpty(content)) return BadRequest("Content is required.");
+        if (content.Length > MaxCardLength)
+            return BadRequest($"A card must be {MaxCardLength} characters or fewer.");
 
         // Reject columns that are not part of this retro, otherwise the card is
         // persisted but never rendered by the board.
-        var columns = JsonConvert.DeserializeObject<List<string>>(session.ColumnsJson) ?? [];
-        if (!columns.Contains(req.Column))
+        var column = req.Column?.Trim();
+        if (string.IsNullOrEmpty(column) || !ReadColumns(session).Contains(column))
             return BadRequest("Unknown column for this retro.");
 
         var card = new RetroCard
         {
             RetroSessionId = session.Id,
             AuthorId = CurrentUserId,
-            Column = req.Column,
-            Content = req.Content.Trim(),
+            Column = column,
+            Content = content,
         };
 
         var inserted = (await sb.Db.From<RetroCard>().Insert(card)).Models.First();
@@ -277,7 +389,11 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         {
             if (card.AuthorId != CurrentUserId || session.Phase != RetroPhase.Write)
                 return Forbid();
-            card.Content = req.Content.Trim();
+            var content = req.Content.Trim();
+            if (content.Length == 0) return BadRequest("Content is required.");
+            if (content.Length > MaxCardLength)
+                return BadRequest($"A card must be {MaxCardLength} characters or fewer.");
+            card.Content = content;
         }
 
         if (req.GroupId is not null || req.GroupLabel is not null)
@@ -286,16 +402,39 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
                 return BadRequest("Grouping is only allowed during the Group phase.");
             // Grouping is a facilitation control, not a participant action.
             if (session.FacilitatorId != CurrentUserId) return Forbid();
-            if (req.GroupId is not null)
-                card.GroupId = req.GroupId == Guid.Empty ? null : req.GroupId;
+
+            if (req.GroupId is Guid groupId)
+            {
+                // The group id is another card's id, and the client renders a
+                // group per distinct value — one pointing outside this retro
+                // would silently split the board.
+                if (groupId == Guid.Empty)
+                {
+                    card.GroupId = null;
+                }
+                else
+                {
+                    if (!(await GetCardIdsAsync(session.Id)).Contains(groupId))
+                        return BadRequest("Group id must be a card of this retro.");
+                    card.GroupId = groupId;
+                }
+            }
+
             if (req.GroupLabel is not null)
-                card.GroupLabel = string.IsNullOrWhiteSpace(req.GroupLabel) ? null : req.GroupLabel.Trim();
+            {
+                var label = req.GroupLabel.Trim();
+                if (label.Length > MaxGroupLabelLength)
+                    return BadRequest($"A group name must be {MaxGroupLabelLength} characters or fewer.");
+                card.GroupLabel = label.Length == 0 ? null : label;
+            }
         }
 
         if (req.DiscussionNotes is not null)
         {
             if (session.Phase != RetroPhase.Discuss)
                 return BadRequest("Discussion notes can only be edited during the Discuss phase.");
+            if (req.DiscussionNotes.Length > MaxNotesLength)
+                return BadRequest($"Discussion notes must be {MaxNotesLength} characters or fewer.");
             card.DiscussionNotes = req.DiscussionNotes;
         }
 
@@ -335,41 +474,54 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
 
     // PUT api/quickretro/{id}/votes
     [HttpPut("api/quickretro/{id:guid}/votes")]
-    public async Task<IActionResult> UpsertVotes(Guid id, [FromBody] List<QuickVoteEntry> req)
+    public async Task<IActionResult> UpsertVotes(Guid id, [FromBody] List<QuickVoteEntry>? req)
     {
         var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
         if (session.Phase != RetroPhase.Vote)
             return BadRequest("Voting is only allowed during the Vote phase.");
 
-        var totalVotes = req.Sum(v => v.Count);
+        var entries = req ?? [];
+
+        // Negative counts used to slip through: they shrank the total below the
+        // budget while the positive entries — the only ones actually stored —
+        // blew straight past it.
+        if (entries.Any(v => v.Count < 0))
+            return BadRequest("Vote counts cannot be negative.");
+
+        var totalVotes = entries.Sum(v => v.Count);
         if (totalVotes > session.VoteCount)
             return BadRequest($"Vote budget exceeded. Maximum is {session.VoteCount} votes.");
 
-        var cardIds = (await sb.Db.From<RetroCard>()
-            .Select("id")
-            .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-            .Get()).Models.Select(c => c.Id.ToString()).ToHashSet();
+        var cardIds = await GetCardIdsAsync(session.Id);
+
+        var parsed = new List<(Guid CardId, int Count)>();
+        foreach (var entry in entries)
+        {
+            if (!Guid.TryParse(entry.CardId, out var cardId) || !cardIds.Contains(cardId))
+                return BadRequest("Vote cast on a card that is not part of this retro.");
+            parsed.Add((cardId, entry.Count));
+        }
 
         // Replace this user's votes for the session in a single round trip.
         if (cardIds.Count > 0)
         {
             await sb.Db.From<RetroVote>()
-                .Filter("retro_card_id", Operator.In, cardIds.ToList())
+                .Filter("retro_card_id", Operator.In, cardIds.Select(c => c.ToString()).ToList())
                 .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
                 .Delete();
         }
 
-        var votes = req
-            .Where(v => v.Count > 0 && cardIds.Contains(v.CardId))
+        var votes = parsed
+            .Where(v => v.Count > 0)
             .Select(v => new RetroVote
             {
-                RetroCardId = Guid.Parse(v.CardId),
+                RetroCardId = v.CardId,
                 UserId = CurrentUserId,
                 Count = v.Count,
             }).ToList();
 
-        if (votes.Any()) await sb.Db.From<RetroVote>().Insert(votes);
+        if (votes.Count > 0) await sb.Db.From<RetroVote>().Insert(votes);
 
         return Ok(new { saved = votes.Count });
     }
@@ -380,6 +532,13 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     {
         var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
+
+        // Out-of-range values used to reach the database and come back as a 500
+        // from the mood_checkins check constraint.
+        if (!IsValidMood(req.EntryMood) || !IsValidMood(req.ExitMood))
+            return BadRequest($"Mood must be between {MinMood} and {MaxMood}.");
+        if (req.EntryMood is null && req.ExitMood is null)
+            return BadRequest("An entry or exit mood is required.");
 
         var existing = (await sb.Db.From<MoodCheckin>()
             .Filter("retro_session_id", Operator.Equals, id.ToString())
@@ -485,14 +644,20 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
 
+        var order = ReadSpeakerOrder(session);
+
         if (req.SpeakerId.HasValue)
         {
+            // Spotlighting someone who isn't in the retro leaves the panel
+            // pointing at a name it can't resolve.
+            var known = order.Contains(req.SpeakerId.Value.ToString())
+                || await participants.IsParticipantAsync(session.Id, req.SpeakerId.Value);
+            if (!known) return BadRequest("That person is not part of this retro.");
+
             session.CurrentSpeakerId = req.SpeakerId;
         }
         else
         {
-            var order = ReadSpeakerOrder(session);
-
             var current = session.CurrentSpeakerId?.ToString() ?? string.Empty;
             var idx = order.IndexOf(current);
 
@@ -512,6 +677,9 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         var session = await GetFacilitatedSession(id);
         if (session is null) return NotFound();
 
+        if (req.CardId.HasValue && !(await GetCardIdsAsync(session.Id)).Contains(req.CardId.Value))
+            return BadRequest("That card is not part of this retro.");
+
         session.ActiveDiscussionCardId = req.CardId;
         await sb.Db.From<RetroSession>().Update(session);
         return Ok(session);
@@ -523,18 +691,19 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     {
         var session = await GetAccessibleSession(id);
         if (session is null) return NotFound();
-        if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest("Text is required.");
+
+        var text = req.Text?.Trim();
+        if (string.IsNullOrEmpty(text)) return BadRequest("Text is required.");
+        if (text.Length > MaxActionItemLength)
+            return BadRequest($"An action item must be {MaxActionItemLength} characters or fewer.");
 
         // Only accept a card that actually belongs to this session.
         Guid? retroCardId = null;
         if (req.RetroCardId.HasValue)
         {
-            var card = (await sb.Db.From<RetroCard>()
-                .Filter("id", Operator.Equals, req.RetroCardId.Value.ToString())
-                .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-                .Get()).Models.FirstOrDefault();
-            if (card is null) return BadRequest("Card does not belong to this retro session.");
-            retroCardId = card.Id;
+            if (!(await GetCardIdsAsync(session.Id)).Contains(req.RetroCardId.Value))
+                return BadRequest("Card does not belong to this retro session.");
+            retroCardId = req.RetroCardId;
         }
 
         var item = new ActionItem
@@ -543,7 +712,7 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             RetroSessionId = session.Id,
             RetroCardId = retroCardId,
             Type = ActionItemType.Retro,
-            Text = req.Text.Trim(),
+            Text = text,
             Status = ActionItemStatus.Open,
         };
 
@@ -552,15 +721,18 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
     }
 }
 
+// The string members are nullable on purpose: JSON binding happily leaves a
+// missing property null regardless of the declared reference type, so every
+// endpoint has to check rather than trust the signature.
 public record QuickCreateRetroRequest(
-    string Name,
+    string? Name,
     string? ColumnsJson,
     int? VoteCount,
     bool? HideVotesUntilRevealed,
     bool? SkipMoodCheckins,
     bool? SkipIcebreaker);
 
-public record QuickAddCardRequest(string Column, string Content);
+public record QuickAddCardRequest(string? Column, string? Content);
 
 public class QuickUpdateCardRequest
 {
@@ -571,7 +743,7 @@ public class QuickUpdateCardRequest
     public bool? IsDiscussed { get; init; }
 }
 
-public record QuickVoteEntry(string CardId, int Count);
+public record QuickVoteEntry(string? CardId, int Count);
 
 public record QuickMoodRequest(int? EntryMood, int? ExitMood);
 
@@ -579,4 +751,4 @@ public record QuickAdvanceSpeakerRequest(Guid? SpeakerId);
 
 public record QuickSetDiscussRequest(Guid? CardId);
 
-public record QuickCreateActionItemRequest(string Text, Guid? RetroCardId);
+public record QuickCreateActionItemRequest(string? Text, Guid? RetroCardId);

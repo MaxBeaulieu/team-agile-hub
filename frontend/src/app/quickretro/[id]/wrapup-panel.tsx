@@ -16,7 +16,6 @@ import type {
   RetroSession,
   MoodCheckin,
   RetroCard,
-  TeamMemberData,
   ActionItemData,
 } from "./page";
 import type {
@@ -37,7 +36,6 @@ type Props = {
   session: RetroSession;
   cards: RetroCard[];
   moodCheckins: MoodCheckin[];
-  teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
   roster: RosterMember[];
   participants: RetroParticipantData[];
@@ -109,7 +107,6 @@ export function WrapUpPanel({
   session,
   cards,
   moodCheckins,
-  teamMembers,
   actionItems,
   roster,
   participants,
@@ -170,9 +167,11 @@ export function WrapUpPanel({
 
   function exportMarkdown() {
     const title = session.name || "Retro";
-    const members = [...teamMembers, ...roster].map((m) => ({
-      userId: m.userId,
-      displayName: m.displayName,
+    // A quick retro has no team, so assignee names come from the people who
+    // actually joined.
+    const members = participants.map((p) => ({
+      userId: p.userId,
+      displayName: p.displayName,
     }));
     const visibleMoodCheckins = moodCheckins.filter((m) =>
       rosterUserIds.has(m.userId),

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { parseStringArray } from "@/lib/retro-groups";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -82,22 +83,20 @@ function CardColumn({
     }
   }
 
-  const myCards = cards.filter((c) => c.column === column);
-
   return (
     <div className="flex flex-col gap-3 min-w-0">
       {/* Column header */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">{column}</h3>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {myCards.length} card{myCards.length !== 1 ? "s" : ""}
+          {cards.length} card{cards.length !== 1 ? "s" : ""}
           {hiddenCount > 0 && ` · ${hiddenCount} hidden`}
         </span>
       </div>
 
       {/* Cards */}
       <div className="flex flex-col gap-2">
-        {myCards.map((card) => (
+        {cards.map((card) => (
           <div
             key={card.id}
             className="group rounded-lg border border-border bg-card px-3 py-2.5 text-sm leading-snug relative"
@@ -173,7 +172,7 @@ export function WritePanel({
   currentUserId,
   onRefresh,
 }: Props) {
-  const columns: string[] = JSON.parse(session.columnsJson);
+  const columns = parseStringArray(session.columnsJson);
 
   return (
     <div className="p-6 space-y-4">
@@ -185,24 +184,30 @@ export function WritePanel({
         </p>
       </div>
 
-      <div
-        className="grid gap-4"
-        style={{
-          gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
-        }}
-      >
-        {columns.map((col) => (
-          <CardColumn
-            key={col}
-            column={col}
-            cards={cards.filter((c) => c.column === col)}
-            hiddenCount={hiddenCounts[col] ?? 0}
-            currentUserId={currentUserId}
-            session={session}
-            onRefresh={onRefresh}
-          />
-        ))}
-      </div>
+      {columns.length === 0 ? (
+        <p className="text-sm text-muted-foreground italic">
+          This retro has no columns configured.
+        </p>
+      ) : (
+        <div
+          className="grid gap-4"
+          style={{
+            gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+          }}
+        >
+          {columns.map((col) => (
+            <CardColumn
+              key={col}
+              column={col}
+              cards={cards.filter((c) => c.column === col)}
+              hiddenCount={hiddenCounts[col] ?? 0}
+              currentUserId={currentUserId}
+              session={session}
+              onRefresh={onRefresh}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

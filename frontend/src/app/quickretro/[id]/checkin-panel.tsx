@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import type { RetroSession, MoodCheckin, TeamMemberData } from "./page";
+import type { RetroSession, MoodCheckin } from "./page";
 import type { RosterMember } from "@/components/retro/types";
 import { rosterInitials, rosterFirstName } from "@/components/retro/types";
 import { CheckCircle2 } from "lucide-react";
@@ -19,7 +19,6 @@ const MOODS = [
 type Props = {
   session: RetroSession;
   moodCheckins: MoodCheckin[];
-  teamMembers: TeamMemberData[];
   roster: RosterMember[];
   currentUserId: string;
   onRefresh: () => void;
@@ -124,17 +123,14 @@ export function CheckInPanel({
         <div className="flex flex-wrap gap-2 pt-1">
           {roster.map((m) => {
             const checkedIn = checkedInSet.has(m.userId);
-            const initials = rosterInitials(m.displayName);
-            const myMoodEntry = moodCheckins.find(
+            const memberMood = moodCheckins.find(
               (c) => c.userId === m.userId,
             )?.entryMood;
-            const emojiDisplay = myMoodEntry
-              ? MOODS.find((mo) => mo.value === myMoodEntry)?.emoji
-              : null;
+            const mood = MOODS.find((mo) => mo.value === memberMood);
             return (
               <div
                 key={m.userId}
-                title={`${m.displayName}${checkedIn ? ` — ${MOODS.find((mo) => mo.value === myMoodEntry)?.label}` : " — not checked in"}`}
+                title={`${m.displayName} — ${mood ? mood.label : "not checked in"}`}
                 className="relative flex flex-col items-center gap-0.5"
               >
                 <div
@@ -146,7 +142,7 @@ export function CheckInPanel({
                       : "border-border bg-muted text-muted-foreground",
                   ].join(" ")}
                 >
-                  {emojiDisplay ?? initials}
+                  {mood?.emoji ?? rosterInitials(m.displayName)}
                 </div>
                 {checkedIn && (
                   <CheckCircle2 className="size-3 text-primary absolute -bottom-0.5 -right-0.5 bg-background rounded-full" />

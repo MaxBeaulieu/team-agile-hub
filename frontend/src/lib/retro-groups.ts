@@ -5,6 +5,22 @@
 /** Matches the `group_label` column length in the database. */
 export const GROUP_LABEL_MAX = 100
 
+/**
+ * Reads a JSON array of strings that came from the database (board columns,
+ * speaker order). These are plain `text` columns, so a legacy or hand-edited
+ * row can hold anything; a bare `JSON.parse` would take the whole board down
+ * with it.
+ */
+export function parseStringArray(json: string | null | undefined): string[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by',
   'can', 'could', 'did', 'do', 'does', 'for', 'from', 'get', 'got', 'had',
