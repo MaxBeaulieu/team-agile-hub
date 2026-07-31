@@ -171,6 +171,18 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             .GroupBy(c => c.Column)
             .ToDictionary(g => g.Key, g => g.Count());
 
+        // Who has finished voting, captured before the filter below throws other
+        // people's vote rows away. Facilitation progress must not depend on what
+        // this particular user is allowed to see, and knowing *that* someone is
+        // done doesn't reveal *what* they voted for. A partly spent budget still
+        // leaves cards unranked, so only a fully spent one counts as finished.
+        var finishedVotingUserIds = allCards
+            .SelectMany(c => c.Votes)
+            .GroupBy(v => v.UserId)
+            .Where(g => g.Sum(v => v.Count) >= session.VoteCount)
+            .Select(g => g.Key)
+            .ToList();
+
         // If hide_votes_until_revealed is set and we're still in Vote phase,
         // strip other users' votes so they can't be seen
         if (session.HideVotesUntilRevealed && session.Phase == RetroPhase.Vote)
@@ -178,7 +190,6 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             foreach (var card in visibleCards)
                 card.Votes = card.Votes.Where(v => v.UserId == userId).ToList();
         }
-
         var moodCheckins = (await sb.Db.From<MoodCheckin>()
             .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
             .Get()).Models;
@@ -205,6 +216,7 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             TeamMembers  = teamMembers,
             ActionItems  = actionItems,
             Participants = await participants.GetParticipantsAsync(session.Id),
+            FinishedVotingUserIds = finishedVotingUserIds,
             SprintName   = sprint.Name,
         });
     }

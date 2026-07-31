@@ -155,6 +155,18 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             .GroupBy(c => c.Column)
             .ToDictionary(g => g.Key, g => g.Count());
 
+        // Who has finished voting, captured before the filter below throws other
+        // people's vote rows away. Facilitation progress must not depend on what
+        // this particular user is allowed to see, and knowing *that* someone is
+        // done doesn't reveal *what* they voted for. A partly spent budget still
+        // leaves cards unranked, so only a fully spent one counts as finished.
+        var finishedVotingUserIds = allCards
+            .SelectMany(c => c.Votes)
+            .GroupBy(v => v.UserId)
+            .Where(g => g.Sum(v => v.Count) >= session.VoteCount)
+            .Select(g => g.Key)
+            .ToList();
+
         if (session.HideVotesUntilRevealed && session.Phase == RetroPhase.Vote)
         {
             foreach (var card in visibleCards)
@@ -181,6 +193,7 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             TeamMembers  = new List<TeamMember>(),
             ActionItems  = actionItems,
             Participants = await participants.GetParticipantsAsync(session.Id),
+            FinishedVotingUserIds = finishedVotingUserIds,
             RetroName    = session.Name,
         });
     }

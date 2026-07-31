@@ -204,14 +204,19 @@ function DiscussionGroup({
   // Notes live on the anchor card, but older per-card notes stay readable.
   const otherNotes = group.cards.filter(c => c.id !== anchor.id && c.discussionNotes?.trim())
 
-  async function markDiscussed() {
+  const statusIcon = discussed
+    ? <CheckCircle2 className="size-4 text-primary shrink-0" />
+    : <Circle className="size-4 text-muted-foreground shrink-0" />
+
+  async function toggleDiscussed() {
+    const next = !discussed
     setMarking(true)
     try {
       await Promise.all(
         group.cards
-          .filter(c => !c.isDiscussed)
+          .filter(c => c.isDiscussed !== next)
           .map(c => api.patch(`/api/teams/${teamId}/retro/${session.id}/cards/${c.id}`, {
-            isDiscussed: true,
+            isDiscussed: next,
           })),
       )
       onRefresh()
@@ -237,10 +242,17 @@ function DiscussionGroup({
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2 min-w-0">
-            {discussed
-              ? <CheckCircle2 className="size-4 text-primary shrink-0 mt-0.5" />
-              : <Circle className="size-4 text-muted-foreground shrink-0 mt-0.5" />
-            }
+            {isFacilitator ? (
+              <button
+                onClick={toggleDiscussed}
+                disabled={marking}
+                aria-pressed={discussed}
+                title={discussed ? 'Mark as not discussed' : 'Mark as discussed'}
+                className="shrink-0 mt-0.5 rounded-full transition-colors hover:text-primary disabled:opacity-50"
+              >
+                {statusIcon}
+              </button>
+            ) : statusIcon}
             <div className="min-w-0 space-y-1">
               {group.label && (
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -317,7 +329,7 @@ function DiscussionGroup({
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs gap-1.5"
-                onClick={markDiscussed}
+                onClick={toggleDiscussed}
                 disabled={marking}
               >
                 <CheckCircle2 className="size-3" />
@@ -399,7 +411,7 @@ export function DiscussPanel({
           </p>
         </div>
         <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-          {discussedCount}/{totalGroups} discussed
+          {discussedCount}/{totalGroups} topics discussed
         </div>
       </div>
 

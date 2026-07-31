@@ -231,15 +231,22 @@ function DiscussionGroup({
     (c) => c.id !== anchor.id && c.discussionNotes?.trim(),
   );
 
-  async function markDiscussed() {
+  const statusIcon = discussed ? (
+    <CheckCircle2 className="size-4 text-primary shrink-0" />
+  ) : (
+    <Circle className="size-4 text-muted-foreground shrink-0" />
+  );
+
+  async function toggleDiscussed() {
+    const next = !discussed;
     setMarking(true);
     try {
       await Promise.all(
         group.cards
-          .filter((c) => !c.isDiscussed)
+          .filter((c) => c.isDiscussed !== next)
           .map((c) =>
             api.patch(`/api/quickretro/${session.id}/cards/${c.id}`, {
-              isDiscussed: true,
+              isDiscussed: next,
             }),
           ),
       );
@@ -268,10 +275,20 @@ function DiscussionGroup({
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2 min-w-0">
-            {discussed ? (
-              <CheckCircle2 className="size-4 text-primary shrink-0 mt-0.5" />
+            {isFacilitator ? (
+              <button
+                onClick={toggleDiscussed}
+                disabled={marking}
+                aria-pressed={discussed}
+                title={
+                  discussed ? "Mark as not discussed" : "Mark as discussed"
+                }
+                className="shrink-0 mt-0.5 rounded-full transition-colors hover:text-primary disabled:opacity-50"
+              >
+                {statusIcon}
+              </button>
             ) : (
-              <Circle className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+              statusIcon
             )}
             <div className="min-w-0 space-y-1">
               {group.label && (
@@ -314,7 +331,11 @@ function DiscussionGroup({
         {/* Notes editor (only on the active group) */}
         {isActive && (
           <div className="mt-2 rounded-md border border-border bg-background px-2.5 py-2">
-            <NotesEditor card={anchor} session={session} onRefresh={onRefresh} />
+            <NotesEditor
+              card={anchor}
+              session={session}
+              onRefresh={onRefresh}
+            />
           </div>
         )}
 
@@ -349,7 +370,7 @@ function DiscussionGroup({
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs gap-1.5"
-                onClick={markDiscussed}
+                onClick={toggleDiscussed}
                 disabled={marking}
               >
                 <CheckCircle2 className="size-3" />
@@ -439,7 +460,7 @@ export function DiscussPanel({
           </p>
         </div>
         <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-          {discussedCount}/{totalGroups} discussed
+          {discussedCount}/{totalGroups} topics discussed
         </div>
       </div>
 
