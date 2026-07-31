@@ -23,20 +23,25 @@ type Props = {
 function GroupCard({
   card,
   selected,
+  selectable,
   onToggle,
 }: {
   card: RetroCard
   selected: boolean
+  selectable: boolean
   onToggle: () => void
 }) {
   return (
     <div
-      onClick={onToggle}
+      onClick={selectable ? onToggle : undefined}
       className={[
-        'rounded-lg border px-3 py-2.5 text-sm cursor-pointer select-none transition-all',
+        'rounded-lg border px-3 py-2.5 text-sm select-none transition-all',
+        selectable ? 'cursor-pointer' : 'cursor-default',
         selected
           ? 'border-primary bg-primary/10 ring-1 ring-primary'
-          : 'border-border bg-card hover:border-primary/40',
+          : selectable
+            ? 'border-border bg-card hover:border-primary/40'
+            : 'border-border bg-card',
       ].join(' ')}
     >
       {card.groupLabel && (
@@ -107,7 +112,12 @@ function ColumnSection({
           )}
           {gCards.map(c => (
             <div key={c.id} className="relative">
-              <GroupCard card={c} selected={selected.has(c.id)} onToggle={() => onToggle(c.id)} />
+              <GroupCard
+                card={c}
+                selected={selected.has(c.id)}
+                selectable={isFacilitator}
+                onToggle={() => onToggle(c.id)}
+              />
               {isFacilitator && (
                 <button
                   onClick={() => removeFromGroup(c.id)}
@@ -125,7 +135,13 @@ function ColumnSection({
 
       {/* Ungrouped */}
       {ungrouped.map(c => (
-        <GroupCard key={c.id} card={c} selected={selected.has(c.id)} onToggle={() => onToggle(c.id)} />
+        <GroupCard
+          key={c.id}
+          card={c}
+          selected={selected.has(c.id)}
+          selectable={isFacilitator}
+          onToggle={() => onToggle(c.id)}
+        />
       ))}
 
       {cards.length === 0 && (
@@ -145,6 +161,7 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
   const columns: string[] = JSON.parse(session.columnsJson)
 
   function toggleCard(id: string) {
+    if (!isFacilitator) return
     setSelected(prev => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -166,10 +183,33 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
       .map(c => c.id)
   }
 
+  /** Distinct groups the resolved selection already belongs to, in card order. */
+  function existingGroupIds(ids: string[]): string[] {
+    return [...new Set(
+      cards.filter(c => ids.includes(c.id) && c.groupId).map(c => c.groupId as string)
+    )]
+  }
+
+  /**
+   * Where the selection lands: an existing group absorbs the loose cards, so its
+   * id (which anchors the group's votes) survives. Only a fully-new selection
+   * mints a new group id.
+   */
+  function targetGroupId(ids: string[]): string {
+    return existingGroupIds(ids)[0] ?? ids[0]
+  }
+
   function openGroupDialog() {
     const ids = resolveGroupIds()
+    const groupCards = cards.filter(c => ids.includes(c.id))
+    const groups = existingGroupIds(ids)
+    // Adding to one existing group keeps its name; merging groups rebuilds one.
+    const keptLabel =
+      groups.length === 1
+        ? cards.find(c => c.groupId === groups[0])?.groupLabel ?? ''
+        : ''
     setPendingIds(ids)
-    setLabel(buildGroupLabel(cards.filter(c => ids.includes(c.id)).map(c => c.content)))
+    setLabel(keptLabel || buildGroupLabel(groupCards.map(c => c.content)))
     setLabelOpen(true)
   }
 
@@ -177,18 +217,23 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
     if (pendingIds.length < 2) return
     setGrouping(true)
     try {
-      // Assign all selected cards to the same groupId (first card's id)
-      const groupId = pendingIds[0]
+      const groupId = targetGroupId(pendingIds)
       const groupLabel =
         label.trim() ||
         buildGroupLabel(cards.filter(c => pendingIds.includes(c.id)).map(c => c.content))
       await Promise.all(
-        pendingIds.map(id =>
-          api.patch(`/api/teams/${teamId}/retro/${session.id}/cards/${id}`, {
-            groupId,
-            groupLabel: groupLabel || null,
-          })
-        )
+        cards
+          .filter(
+            c =>
+              pendingIds.includes(c.id) &&
+              (c.groupId !== groupId || c.groupLabel !== (groupLabel || null))
+          )
+          .map(c =>
+            api.patch(`/api/teams/${teamId}/retro/${session.id}/cards/${c.id}`, {
+              groupId,
+              groupLabel: groupLabel || null,
+            })
+          )
       )
       setLabel('')
       setPendingIds([])
@@ -209,7 +254,9 @@ export function GroupPanel({ session, cards, currentUserId, teamId, isFacilitato
         <div className="space-y-1">
           <h2 className="text-base font-semibold">Group</h2>
           <p className="text-xs text-muted-foreground">
-            Click cards to select them, then group similar ideas together.
+            {isFacilitator
+              ? 'Click cards to select them, then group similar ideas together.'
+              : 'The facilitator is grouping similar ideas together.'}
           </p>
         </div>
 
