@@ -26,8 +26,12 @@ public abstract class ApiControllerBase(AuthorizationService auth) : ControllerB
     private bool? _isPlatformAdmin;
 
     /// <summary>Org-wide admin — floor map, desk defect queue.</summary>
-    protected async Task<bool> IsPlatformAdminAsync() =>
-        _isPlatformAdmin ??= await Auth.IsPlatformAdminAsync(CurrentUserId);
+    protected async Task<bool> IsPlatformAdminAsync()
+    {
+        if (_isPlatformAdmin is null)
+            _isPlatformAdmin = await Auth.IsPlatformAdminAsync(CurrentUserId);
+        return _isPlatformAdmin.Value;
+    }
 
     /// <summary>Can participate in this team's ceremonies.</summary>
     protected Task<bool> IsTeamMemberAsync(Guid teamId) =>
