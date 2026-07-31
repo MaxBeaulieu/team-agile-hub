@@ -84,12 +84,18 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         return sprint is null ? null : session;
     }
 
-    private static RetroPhase NextPhase(RetroPhase current)
+    private static RetroPhase NextPhase(RetroSession session)
     {
-        var idx = Array.IndexOf(PhaseOrder, current);
-        return idx >= 0 && idx < PhaseOrder.Length - 1
+        var idx = Array.IndexOf(PhaseOrder, session.Phase);
+        var next = idx >= 0 && idx < PhaseOrder.Length - 1
             ? PhaseOrder[idx + 1]
             : RetroPhase.Completed;
+
+        // The icebreaker round is opt-out, so hop straight to Write.
+        if (next == RetroPhase.Icebreaker && session.SkipIcebreaker)
+            next = RetroPhase.Write;
+
+        return next;
     }
 
     // ─── Create ──────────────────────────────────────────────────────────────
@@ -121,6 +127,7 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             ColumnsJson            = req.ColumnsJson ?? """["Went Well","Improve","Learnings","Questions"]""",
             VoteCount              = req.VoteCount ?? 5,
             HideVotesUntilRevealed = req.HideVotesUntilRevealed ?? false,
+            SkipIcebreaker         = req.SkipIcebreaker ?? false,
         };
 
         var created = (await sb.Db.From<RetroSession>().Insert(session)).Models.First();
@@ -234,7 +241,7 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (session.FacilitatorId != CurrentUserId) return Forbid();
         if (session.Phase == RetroPhase.Completed) return BadRequest("Retro is already completed.");
 
-        var next = NextPhase(session.Phase);
+        var next = NextPhase(session);
 
         // Phase transition side-effects
         if (session.Phase == RetroPhase.CheckIn && next == RetroPhase.Icebreaker)
@@ -595,7 +602,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
 public record CreateRetroRequest(
     string? ColumnsJson,
     int?    VoteCount,
-    bool?   HideVotesUntilRevealed);
+    bool?   HideVotesUntilRevealed,
+    bool?   SkipIcebreaker);
 
 public record UpdateRetroConfigRequest(
     string? ColumnsJson,

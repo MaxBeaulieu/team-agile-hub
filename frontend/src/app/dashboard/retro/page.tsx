@@ -57,6 +57,7 @@ export type RetroSession = {
   columnsJson: string;
   voteCount: number;
   hideVotesUntilRevealed: boolean;
+  skipIcebreaker: boolean;
   currentSpeakerId: string | null;
   speakerOrderJson: string | null;
   icebreakerQuestion: string | null;
@@ -152,11 +153,17 @@ const PHASE_LABELS: Record<RetroPhase, string> = {
 
 // ─── Phase Progress Bar ───────────────────────────────────────────────────────
 
-function PhaseProgressBar({ phase }: { phase: RetroPhase }) {
-  const current = PHASE_ORDER.indexOf(phase);
+function PhaseProgressBar({ session }: { session: RetroSession }) {
+  // The icebreaker round is opt-out, so it disappears from the progress bar
+  // when the facilitator skipped it.
+  const phases = PHASE_ORDER.filter(
+    (p) =>
+      p !== "Completed" && !(p === "Icebreaker" && session.skipIcebreaker),
+  );
+  const current = phases.indexOf(session.phase);
   return (
     <div className="flex items-center gap-1">
-      {PHASE_ORDER.filter((p) => p !== "Completed").map((p, i) => {
+      {phases.map((p, i) => {
         const done = i < current;
         const active = i === current;
         return (
@@ -171,14 +178,12 @@ function PhaseProgressBar({ phase }: { phase: RetroPhase }) {
                     : "w-6 bg-muted",
               ].join(" ")}
             />
-            {i < PHASE_ORDER.filter((p) => p !== "Completed").length - 1 && (
-              <div className="h-px w-2 bg-border" />
-            )}
+            {i < phases.length - 1 && <div className="h-px w-2 bg-border" />}
           </div>
         );
       })}
       <span className="ml-2 text-xs text-muted-foreground font-medium">
-        {PHASE_LABELS[phase]}
+        {PHASE_LABELS[session.phase]}
       </span>
     </div>
   );
@@ -214,7 +219,10 @@ function FacilitatorBar({
   const [advancing, setAdvancing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const label = PHASE_NEXT_LABEL[session.phase];
+  const label =
+    session.phase === "CheckIn" && session.skipIcebreaker
+      ? "Start Writing →"
+      : PHASE_NEXT_LABEL[session.phase];
   if (!label || session.phase === "Completed") return null;
 
   // Show a warning if not everyone is ready for certain phases
@@ -314,7 +322,7 @@ function RetroHeader({
         </Link>
         <div>
           <h1 className="text-sm font-semibold">{sprintName} — Retro</h1>
-          <PhaseProgressBar phase={session.phase} />
+          <PhaseProgressBar session={session} />
         </div>
       </div>
     </div>
@@ -341,6 +349,7 @@ function NoRetroSession({
   );
   const [votes, setVotes] = useState(5);
   const [hideVotes, setHideVotes] = useState(false);
+  const [skipIcebreaker, setSkipIcebreaker] = useState(false);
 
   async function create() {
     setCreating(true);
@@ -350,6 +359,7 @@ function NoRetroSession({
         columnsJson: JSON.stringify(cols),
         voteCount: votes,
         hideVotesUntilRevealed: hideVotes,
+        skipIcebreaker,
       });
       setOpen(false);
       onCreated();
@@ -406,6 +416,16 @@ function NoRetroSession({
                 className="accent-primary"
               />
               Hide votes until facilitator reveals
+            </label>
+
+            <label className="flex items-center gap-2.5 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skipIcebreaker}
+                onChange={(e) => setSkipIcebreaker(e.target.checked)}
+                className="accent-primary"
+              />
+              Skip icebreaker round
             </label>
           </div>
 
