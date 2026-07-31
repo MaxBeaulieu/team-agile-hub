@@ -126,7 +126,6 @@ public class PlanningController(SupabaseService sb) : ControllerBase
             Content  = req.Content,
             Status   = req.Status ?? FocusTopicStatus.OnTrack,
             Order    = order,
-            EpicId   = req.EpicId,
         };
 
         var inserted = (await sb.Db.From<FocusTopic>().Insert(topic)).Models.First();
@@ -154,7 +153,6 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (req.Title  is not null)  existing.Title   = req.Title;
         if (req.Content is not null) existing.Content = req.Content;
         if (req.Status.HasValue)     existing.Status  = req.Status.Value;
-        if (req.EpicId.HasValue)     existing.EpicId  = req.EpicId == Guid.Empty ? null : req.EpicId;
 
         await sb.Db.From<FocusTopic>().Update(existing);
         return Ok(existing);
@@ -483,7 +481,7 @@ public class PlanningController(SupabaseService sb) : ControllerBase
 }
 
 // ─── Request DTOs ─────────────────────────────────────────────────────────────
-public record FocusTopicRequest(string? Title, string? Content, FocusTopicStatus? Status, Guid? EpicId);
+public record FocusTopicRequest(string? Title, string? Content, FocusTopicStatus? Status);
 public record RecurringAgendaRequest(string? Title, string? LastStatus);
 public record CreateActionItemRequest(string Text, Guid? AssigneeId, Guid? TalkingPointId);
 public record UpdateActionItemRequest(ActionItemStatus? Status, string? Text, Guid? AssigneeId);

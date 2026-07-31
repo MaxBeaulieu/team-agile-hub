@@ -36,9 +36,6 @@ public class FocusTopic : BaseModel
     [Column("order")]
     public int Order { get; set; }
 
-    [Column("epic_id")]
-    public Guid? EpicId { get; set; }
-
     [Reference(typeof(TalkingPoint), includeInQuery: false, columnName: "talking_points")]
     [JsonProperty("talking_points")]
     public List<TalkingPoint> TalkingPoints { get; set; } = new();

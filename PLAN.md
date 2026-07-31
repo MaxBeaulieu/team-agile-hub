@@ -40,8 +40,6 @@
 | `recurring_agenda_items` | Team-level recurring items (snooze by sprint number) |
 | `icebreakers` | Seeded icebreaker question bank (20 questions across 4 categories) |
 | `jira_integrations` | Per-team Jira OAuth tokens (encrypted, cloud_id, expiry) |
-| `epics` | Team epics (status: on_track / at_risk / on_hold / done, optional Jira link) — _migration 003_ |
-| `epic_kpis` | KPI rows per epic (label, targetValue, currentValue, isDone) — _migration 003_ |
 | `talking_points` | Discussion points — polymorphic: belongs to focus_topic OR recurring_agenda_item — _migration 003_ |
 | `talking_point_notes` | Collaborative notes per talking point (realtime) — _migration 003_ |
 
@@ -85,17 +83,6 @@
 - [x] Talking Point Notes — `POST /api/teams/{teamId}/talking-points/{id}/notes`, `DELETE /api/teams/{teamId}/notes/{id}` (realtime via Supabase)
 - [x] Recurring Agenda CRUD — `GET/POST/PATCH/DELETE /api/teams/{teamId}/recurring-agenda`
 - [x] Action Items CRUD — `POST /api/teams/{teamId}/sprints/{sprintId}/action-items`, `PATCH /api/teams/{teamId}/action-items/{id}`, `DELETE`
-
-### Epics
-- [x] **Epics page** (`/dashboard/epics`) — epic list with status chips, create dialog, inline KPI rows (label / target / current / done toggle)
-- [x] `GET /api/teams/{teamId}/epics` — list epics with KPIs
-- [x] `POST /api/teams/{teamId}/epics` — create epic (title, description, status, expectedDelivery)
-- [x] `PATCH /api/teams/{teamId}/epics/{id}` — update epic fields
-- [x] `DELETE /api/teams/{teamId}/epics/{id}` — delete epic
-- [x] `POST /api/teams/{teamId}/epics/{epicId}/kpis` — add KPI
-- [x] `PATCH /api/teams/{teamId}/kpis/{id}` — update KPI (label, targetValue, currentValue, isDone)
-- [x] `DELETE /api/teams/{teamId}/kpis/{id}` — delete KPI
-- [x] Focus topics can be linked to an epic (optional `epicId` foreign key)
 
 ### Sprint Retro
 - [x] **Migration** `004_retro_improvements.sql` — `facilitator_id` on sessions, `is_discussed` on cards, RLS for `retro_sessions`/`retro_votes`/`mood_checkins`, `is_sprint_member()` helper
@@ -218,7 +205,6 @@ team-agile-hub/
 │       │   │   │   └── create-sprint-dialog.tsx  ✅
 │       │   │   ├── settings/
 │       │   │   │   └── page.tsx                  ✅ Jira connect/disconnect card
-│       │   │       └── page.tsx                  ✅ epics + KPIs
 │       │   └── auth/                             ✅ login / signup / OAuth callback
 │       ├── components/
 │       │   ├── ui/                               ✅ shadcn components
@@ -236,7 +222,6 @@ team-agile-hub/
 │   │   ├── TeamsController.cs                    ✅ full CRUD + invite + member mgmt
 │   │   ├── SprintsController.cs                  ✅ full CRUD + capacity + trainings
 									│   │   ├── PlanningController.cs                 ✅ planning aggregate, focus topics, talking points, notes, action items, recurring agenda + GET /action-items
-│   │   ├── EpicsController.cs                    ✅ epics + KPIs
 │   │   ├── BlockersController.cs                 ✅ CRUD + team-member auth
 │   │   ├── HealthController.cs                   ✅ sprint health aggregate (5 query batches)
 │   │   └── JiraController.cs                     ✅ OAuth 3-LO, status, issue search/create, disconnect
@@ -251,7 +236,7 @@ team-agile-hub/
     └── migrations/
         ├── 001_initial_schema.sql                ✅ all core tables + RLS (blockers table + realtime here)
         ├── 002_fix_team_members_rls.sql          ✅ RLS recursion fix
-        ├── 003_epics_and_talking_points.sql      ✅ epics, kpis, talking points, notes
+        ├── 003_epics_and_talking_points.sql      ✅ talking points, notes (epics dropped in 018)
         ├── 004_retro_improvements.sql            ✅ facilitator_id, is_discussed, retro RLS
         └── 005_poker_improvements.sql            ✅ poker facilitator_id, RLS, realtime (idempotent)
 ```
