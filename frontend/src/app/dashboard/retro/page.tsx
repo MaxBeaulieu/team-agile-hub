@@ -123,6 +123,7 @@ export type RetroData = {
   teamMembers: TeamMemberData[];
   actionItems: ActionItemData[];
   participants: RetroParticipantData[];
+  finishedVotingUserIds: string[];
   sprintName: string;
 };
 
@@ -614,6 +615,7 @@ function RetroInner({
     moodCheckins,
     teamMembers,
     actionItems,
+    finishedVotingUserIds,
     sprintName,
   } = data;
   const isFacilitator = session.facilitatorId === currentUserId;
@@ -626,10 +628,11 @@ function RetroInner({
       .filter((m) => m.entryMood !== null && rosterUserIds.has(m.userId))
       .map((m) => m.userId),
   ).size;
+  // A member counts as done only once their whole vote budget is spent. Comes
+  // from the server rather than from `cards`, whose vote rows are stripped down
+  // to the caller's own while "hide votes until revealed" is on.
   const votedMembers = new Set(
-    cards
-      .flatMap((c) => c.retro_votes.map((v) => v.userId))
-      .filter((id) => rosterUserIds.has(id)),
+    (finishedVotingUserIds ?? []).filter((id) => rosterUserIds.has(id)),
   ).size;
 
   const panelProps = {
