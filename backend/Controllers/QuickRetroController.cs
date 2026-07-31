@@ -284,6 +284,8 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         {
             if (session.Phase != RetroPhase.Group)
                 return BadRequest("Grouping is only allowed during the Group phase.");
+            // Grouping is a facilitation control, not a participant action.
+            if (session.FacilitatorId != CurrentUserId) return Forbid();
             if (req.GroupId is not null)
                 card.GroupId = req.GroupId == Guid.Empty ? null : req.GroupId;
             if (req.GroupLabel is not null)
