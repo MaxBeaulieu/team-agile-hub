@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { buildGroupLabel, GROUP_LABEL_MAX } from "@/lib/retro-groups";
+import {
+  buildGroupLabel,
+  GROUP_LABEL_MAX,
+  parseStringArray,
+} from "@/lib/retro-groups";
 import { toast } from "sonner";
 import { Layers, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,11 +30,14 @@ function GroupCard({
   card,
   selected,
   selectable,
+  showLabel = true,
   onToggle,
 }: {
   card: RetroCard;
   selected: boolean;
   selectable: boolean;
+  /** Off inside a group container, which already shows the name once. */
+  showLabel?: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -46,7 +53,7 @@ function GroupCard({
             : "border-border bg-card",
       ].join(" ")}
     >
-      {card.groupLabel && (
+      {showLabel && card.groupLabel && (
         <span className="inline-block mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {card.groupLabel}
         </span>
@@ -132,6 +139,7 @@ function ColumnSection({
                 card={c}
                 selected={selected.has(c.id)}
                 selectable={isFacilitator}
+                showLabel={false}
                 onToggle={() => onToggle(c.id)}
               />
               {isFacilitator && (
@@ -179,7 +187,7 @@ export function GroupPanel({
   const [pendingIds, setPendingIds] = useState<string[]>([]);
   const [grouping, setGrouping] = useState(false);
 
-  const columns: string[] = JSON.parse(session.columnsJson);
+  const columns: string[] = parseStringArray(session.columnsJson);
 
   function toggleCard(id: string) {
     if (!isFacilitator) return;

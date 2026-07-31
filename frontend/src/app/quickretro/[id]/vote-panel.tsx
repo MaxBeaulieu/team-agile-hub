@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { groupCards, sumMyVotes, type CardGroup } from "@/lib/retro-groups";
+import {
+  groupCards,
+  parseStringArray,
+  sumMyVotes,
+  type CardGroup,
+} from "@/lib/retro-groups";
 import { toast } from "sonner";
 import { Minus, Plus } from "lucide-react";
 import type { RetroSession, RetroCard } from "./page";
@@ -15,6 +20,14 @@ type Props = {
 };
 
 type VoteMap = Record<string, number>; // anchor cardId → count
+
+function votesEqual(a: VoteMap, b: VoteMap) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a[key] ?? 0) !== (b[key] ?? 0)) return false;
+  }
+  return true;
+}
 
 function VoteGroup({
   group,
@@ -105,7 +118,7 @@ export function VotePanel({
   currentUserId,
   onRefresh,
 }: Props) {
-  const columns: string[] = JSON.parse(session.columnsJson);
+  const columns: string[] = parseStringArray(session.columnsJson);
   const maxVotes = session.voteCount;
 
   // Grouped cards are voted on as a single item; the group's anchor card holds the votes.
@@ -123,22 +136,32 @@ export function VotePanel({
   }
 
   const [myVotes, setMyVotes] = useState<VoteMap>(initVotes);
+  const [serverVotes, setServerVotes] = useState<VoteMap>(myVotes);
+  // True between a click and the moment that click reaches the server.
+  const [dirty, setDirty] = useState(false);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<VoteMap | null>(null);
   const isSyncing = useRef(false);
 
-  // Re-sync from the server unless the user has unsaved local vote changes.
-  useEffect(() => {
-    if (!syncTimer.current) {
-      setMyVotes(initVotes());
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards]);
+  // Adopt the server's tally whenever it moves, unless this user has an edit
+  // still on its way there. Done during render rather than in an effect so the
+  // board never paints a stale count.
+  const latestServerVotes = initVotes();
+  if (!votesEqual(latestServerVotes, serverVotes)) {
+    setServerVotes(latestServerVotes);
+    if (!dirty) setMyVotes(latestServerVotes);
+  }
 
   const usedVotes = Object.values(myVotes).reduce((a, b) => a + b, 0);
 
   const syncVotes = useCallback(
     async (votes: VoteMap) => {
-      if (isSyncing.current) return;
+      // A save already in flight would otherwise swallow this change entirely;
+      // remember it and push it as soon as the current one lands.
+      if (isSyncing.current) {
+        pending.current = votes;
+        return;
+      }
       isSyncing.current = true;
       try {
         const entries = Object.entries(votes)
@@ -152,30 +175,47 @@ export function VotePanel({
         );
       } finally {
         isSyncing.current = false;
+        const queued = pending.current;
+        pending.current = null;
+        if (queued) {
+          void syncVotes(queued);
+        } else {
+          setDirty(false);
+        }
       }
     },
     [session.id, onRefresh],
   );
 
+  // Leaving the panel — the facilitator advancing the phase, most often —
+  // must not throw away votes the debounce hasn't pushed yet.
+  const flush = useRef<() => void>(() => {});
+  useEffect(() => {
+    flush.current = () => {
+      if (!syncTimer.current) return;
+      clearTimeout(syncTimer.current);
+      syncTimer.current = null;
+      void syncVotes(myVotes);
+    };
+  });
+  useEffect(() => () => flush.current(), []);
+
   function handleChange(anchorId: string, delta: number) {
-    setMyVotes((prev) => {
-      const current = prev[anchorId] ?? 0;
-      const used = Object.values(prev).reduce((a, b) => a + b, 0);
+    const current = myVotes[anchorId] ?? 0;
 
-      if (delta > 0 && used >= maxVotes) return prev;
-      if (delta < 0 && current === 0) return prev;
+    if (delta > 0 && usedVotes >= maxVotes) return;
+    if (delta < 0 && current === 0) return;
 
-      const next = { ...prev, [anchorId]: current + delta };
+    const next = { ...myVotes, [anchorId]: current + delta };
+    setMyVotes(next);
+    setDirty(true);
 
-      // Debounce sync
-      if (syncTimer.current) clearTimeout(syncTimer.current);
-      syncTimer.current = setTimeout(() => {
-        syncTimer.current = null;
-        syncVotes(next);
-      }, 800);
-
-      return next;
-    });
+    // Debounce sync
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      syncTimer.current = null;
+      void syncVotes(next);
+    }, 800);
   }
 
   return (
@@ -201,7 +241,12 @@ export function VotePanel({
             "h-full rounded-full transition-all",
             usedVotes >= maxVotes ? "bg-amber-500" : "bg-primary",
           ].join(" ")}
-          style={{ width: `${Math.min((usedVotes / maxVotes) * 100, 100)}%` }}
+          style={{
+            width:
+              maxVotes > 0
+                ? `${Math.min((usedVotes / maxVotes) * 100, 100)}%`
+                : "0%",
+          }}
         />
       </div>
 

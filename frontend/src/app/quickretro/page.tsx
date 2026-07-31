@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   ColumnTemplatePicker,
+  MAX_TEMPLATE_COLUMNS,
   parseColumns,
 } from "@/components/retro/column-template-picker";
 
@@ -110,10 +111,21 @@ export default function QuickRetroListPage() {
 
   async function createRetro() {
     const trimmed = name.trim() || defaultRetroName();
+    const cols = parseColumns(columns);
+
+    // A board with no columns has nowhere to write, and the server rejects it
+    // anyway — say so before the round trip.
+    if (cols.length === 0) {
+      toast.error("Add at least one column");
+      return;
+    }
+    if (cols.length > MAX_TEMPLATE_COLUMNS) {
+      toast.error(`A retro can have at most ${MAX_TEMPLATE_COLUMNS} columns`);
+      return;
+    }
 
     setCreating(true);
     try {
-      const cols = parseColumns(columns);
       const created = await api.post<QuickRetroSession>("/api/quickretro", {
         name: trimmed,
         columnsJson: JSON.stringify(cols),

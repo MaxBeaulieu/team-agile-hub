@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { parseStringArray } from "@/lib/retro-groups";
 import { toast } from "sonner";
 import {
   RefreshCw,
@@ -13,13 +14,12 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { RetroSession, TeamMemberData } from "./page";
+import type { RetroSession } from "./page";
 import type { RosterMember } from "@/components/retro/types";
 import { rosterInitials, rosterFirstName } from "@/components/retro/types";
 
 type Props = {
   session: RetroSession;
-  teamMembers: TeamMemberData[];
   roster: RosterMember[];
   currentUserId: string;
   isFacilitator: boolean;
@@ -40,9 +40,7 @@ export function IcebreakerPanel({
   const [editing, setEditing] = useState(false);
   const [draftQuestion, setDraftQuestion] = useState("");
 
-  const speakerOrder: string[] = session.speakerOrderJson
-    ? JSON.parse(session.speakerOrderJson)
-    : [];
+  const speakerOrder: string[] = parseStringArray(session.speakerOrderJson);
 
   // The round only begins once the facilitator hits Start, so nobody is put on
   // the spot the moment the phase opens (EE-163).
