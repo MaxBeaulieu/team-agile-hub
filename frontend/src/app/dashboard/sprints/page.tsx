@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/select'
 import { SprintCard } from './sprint-card'
 import { CreateSprintDialog } from './create-sprint-dialog'
+import { useMe } from '@/components/providers/auth-provider'
+import { canManageSprints } from '@/lib/permissions'
 
 // ─── Shared types ───────────────────────────────────────────────────────────
 
@@ -66,6 +68,7 @@ function groupByStatus(sprints: Sprint[]) {
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function SprintsPage() {
+  const { me } = useMe()
   const [teams, setTeams] = useState<Team[]>([])
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
   const [sprints, setSprints] = useState<Sprint[]>([])
@@ -109,6 +112,7 @@ export default function SprintsPage() {
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId)
   const sprintTerm = selectedTeam?.sprintTerm ?? 'Sprint'
+  const canCreate = canManageSprints(me, selectedTeamId)
   const grouped = groupByStatus(sprints)
 
   return (
@@ -142,7 +146,7 @@ export default function SprintsPage() {
             </Select>
           )}
 
-          {selectedTeamId && (
+          {selectedTeamId && canCreate && (
             <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setCreateOpen(true)}>
               <Plus className="size-3.5" />
               New {sprintTerm}
@@ -169,13 +173,17 @@ export default function SprintsPage() {
             <div className="text-center">
               <p className="text-sm font-medium">No {sprintTerm.toLowerCase()}s yet</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Create your first {sprintTerm.toLowerCase()} to get started.
+                {canCreate
+                  ? `Create your first ${sprintTerm.toLowerCase()} to get started.`
+                  : `A team admin needs to create the first ${sprintTerm.toLowerCase()}.`}
               </p>
             </div>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-3.5" />
-              New {sprintTerm}
-            </Button>
+            {canCreate && (
+              <Button size="sm" className="gap-1.5 text-xs" onClick={() => setCreateOpen(true)}>
+                <Plus className="size-3.5" />
+                New {sprintTerm}
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-8">

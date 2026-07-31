@@ -1,36 +1,21 @@
 using Backend.Models;
 using Backend.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 using static Postgrest.Constants;
-using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/teams/{teamId:guid}/sprints")]
-[Authorize]
-public class SprintsController(SupabaseService sb) : ControllerBase
+public class SprintsController(SupabaseService sb, AuthorizationService auth)
+    : ApiControllerBase(auth)
 {
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
-
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var result = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return result.Models.Any();
-    }
-
     // GET api/teams/{teamId}/sprints
     [HttpGet]
     public async Task<IActionResult> GetSprints(Guid teamId)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var result = await sb.Db.From<Sprint>()
             .Select("*, sprint_members(*), sprint_trainings(*)")
@@ -45,7 +30,7 @@ public class SprintsController(SupabaseService sb) : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetSprint(Guid teamId, Guid id)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var result = await sb.Db.From<Sprint>()
             .Select("*, sprint_members(*), sprint_trainings(*), focus_topics(*), action_items(*), blockers(*)")
@@ -62,7 +47,8 @@ public class SprintsController(SupabaseService sb) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateSprint(Guid teamId, [FromBody] CreateSprintRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        // Shaping the cadence is an admin act; members participate in what it contains.
+        if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
         // Get the previous sprint goal for reference
         var prev = await sb.Db.From<Sprint>()
@@ -109,7 +95,7 @@ public class SprintsController(SupabaseService sb) : ControllerBase
     [HttpPatch("{id:guid}")]
     public async Task<IActionResult> UpdateSprint(Guid teamId, Guid id, [FromBody] JObject body)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
         var result = await sb.Db.From<Sprint>()
             .Filter("team_id", Operator.Equals, teamId.ToString())
@@ -137,12 +123,34 @@ public class SprintsController(SupabaseService sb) : ControllerBase
         return Ok(sprint);
     }
 
+    // DELETE api/teams/{teamId}/sprints/{id}
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteSprint(Guid teamId, Guid id)
+    {
+        if (!await IsTeamAdminAsync(teamId)) return Forbid();
+
+        var sprint = (await sb.Db.From<Sprint>()
+            .Filter("team_id", Operator.Equals, teamId.ToString())
+            .Filter("id",      Operator.Equals, id.ToString())
+            .Get()).Models.FirstOrDefault();
+
+        if (sprint is null) return NotFound();
+
+        // Everything hanging off the sprint (members, trainings, focus topics, retros,
+        // poker sessions, action items) is removed by the ON DELETE CASCADE chain.
+        await sb.Db.From<Sprint>()
+            .Filter("id", Operator.Equals, id.ToString())
+            .Delete();
+
+        return NoContent();
+    }
+
     // PUT api/teams/{teamId}/sprints/{id}/members/{userId}
     [HttpPut("{id:guid}/members/{userId:guid}")]
     public async Task<IActionResult> UpsertSprintMember(
         Guid teamId, Guid id, Guid userId, [FromBody] UpsertSprintMemberRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var existing = (await sb.Db.From<SprintMember>()
             .Filter("sprint_id", Operator.Equals, id.ToString())
@@ -167,7 +175,7 @@ public class SprintsController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> UpsertTraining(
         Guid teamId, Guid id, Guid userId, [FromBody] UpsertTrainingRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var existing = (await sb.Db.From<SprintTraining>()
             .Filter("sprint_id", Operator.Equals, id.ToString())

@@ -9,6 +9,8 @@ import '@/components/floor/floor-plan.css'
 import { floorApi } from '@/components/floor/floorApi'
 import { floorCssVars } from '@/components/floor/floorTokens'
 import type { SeatDefectReport } from '@/components/floor/floorTypes'
+import { useMe } from '@/components/providers/auth-provider'
+import { canAdminFloor } from '@/lib/permissions'
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message.replace(/^API \d+:\s*/, '') : fallback
@@ -23,6 +25,9 @@ function formatDate(value: string) {
 }
 
 export default function FloorReportsPage() {
+  const { me, loading: meLoading } = useMe()
+  const isAdmin = canAdminFloor(me)
+
   const [tab, setTab] = useState<'open' | 'closed'>('open')
   const [reports, setReports] = useState<SeatDefectReport[]>([])
   const [loading, setLoading] = useState(true)
@@ -37,7 +42,7 @@ export default function FloorReportsPage() {
       setLoadError(null)
     } catch (error) {
       setLoadError(
-        errorMessage(error, 'Could not load the reports. Only team admins can see this page.'),
+        errorMessage(error, 'Could not load the reports.'),
       )
     } finally {
       setLoading(false)
@@ -45,8 +50,9 @@ export default function FloorReportsPage() {
   }, [])
 
   useEffect(() => {
+    if (!isAdmin) return
     void load(tab)
-  }, [load, tab])
+  }, [isAdmin, load, tab])
 
   const copyForSlack = async (report: SeatDefectReport) => {
     try {
@@ -95,6 +101,15 @@ export default function FloorReportsPage() {
           </Link>
         </div>
 
+        {!meLoading && !isAdmin && (
+          <p className="fp-alert">
+            The defect queue is handled by platform admins. Report a problem from the floor map
+            and it will land here.
+          </p>
+        )}
+
+        {isAdmin && (
+          <>
         {loadError && <p className="fp-alert">{loadError}</p>}
         {loading && !loadError && <p className="fp-detail-empty">Loading reports…</p>}
 
@@ -159,6 +174,8 @@ export default function FloorReportsPage() {
             </article>
           ))}
         </div>
+          </>
+        )}
       </div>
     </div>
   )

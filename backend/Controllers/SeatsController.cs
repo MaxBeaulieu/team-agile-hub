@@ -1,6 +1,5 @@
 using Backend.Models;
 using Backend.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using static Postgrest.Constants;
 using System.Security.Claims;
@@ -9,30 +8,19 @@ namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
-public class SeatsController(SupabaseService sb) : ControllerBase
+public class SeatsController(SupabaseService sb, AuthorizationService auth)
+    : ApiControllerBase(auth)
 {
     private const int MaxNoteLength = 500;
     private const int MaxReasonLength = 500;
-
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
 
     private List<TeamMember>? _memberships;
 
     private async Task<List<TeamMember>> MyMemberships()
     {
-        _memberships ??= (await sb.Db.From<TeamMember>()
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Order("joined_at", Ordering.Ascending)
-            .Get()).Models;
+        _memberships ??= await Auth.GetMembershipsAsync(CurrentUserId);
         return _memberships;
     }
-
-    // This app has no org-wide role, so "admin" means admin of at least one team.
-    private async Task<bool> IsAdmin() =>
-        (await MyMemberships()).Any(m => m.Role == TeamRole.Admin);
 
     private async Task<string> MyDisplayName()
     {
@@ -67,7 +55,7 @@ public class SeatsController(SupabaseService sb) : ControllerBase
     [HttpGet("reports")]
     public async Task<IActionResult> GetDefectReports([FromQuery] string? status)
     {
-        if (!await IsAdmin()) return Forbid();
+        if (!await IsPlatformAdminAsync()) return Forbid();
 
         var wanted = status?.Trim().ToLowerInvariant();
         if (wanted is not (null or "" or "open" or "closed"))
@@ -138,7 +126,7 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         var seat = await FindSeat(id);
         if (seat is null) return NotFound();
         if (seat.OccupantId is null) return Conflict("This seat is already available.");
-        if (seat.OccupantId != CurrentUserId && !await IsAdmin()) return Forbid();
+        if (seat.OccupantId != CurrentUserId && !await IsPlatformAdminAsync()) return Forbid();
 
         Vacate(seat);
         await sb.Db.From<Seat>().Update(seat);
@@ -149,7 +137,7 @@ public class SeatsController(SupabaseService sb) : ControllerBase
     [HttpPost("{id:guid}/unassign")]
     public async Task<IActionResult> UnassignSeat(Guid id)
     {
-        if (!await IsAdmin()) return Forbid();
+        if (!await IsPlatformAdminAsync()) return Forbid();
 
         var seat = await FindSeat(id);
         if (seat is null) return NotFound();
@@ -194,7 +182,7 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         if (seat is null) return NotFound();
 
         // Whoever sits there can see what is on the desk; anyone else needs to be an admin.
-        if (seat.OccupantId != CurrentUserId && !await IsAdmin()) return Forbid();
+        if (seat.OccupantId != CurrentUserId && !await IsPlatformAdminAsync()) return Forbid();
 
         seat.HasDock = req.HasDock ?? seat.HasDock;
         seat.HasTerminal = req.HasTerminal ?? seat.HasTerminal;
@@ -236,7 +224,7 @@ public class SeatsController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> CloseDefectReport(
         Guid reportId, [FromBody] CloseSeatDefectRequest req)
     {
-        if (!await IsAdmin()) return Forbid();
+        if (!await IsPlatformAdminAsync()) return Forbid();
 
         var report = (await sb.Db.From<SeatDefectReport>()
             .Filter("id", Operator.Equals, reportId.ToString())

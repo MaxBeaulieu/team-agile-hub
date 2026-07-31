@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
+import { useMe } from '@/components/providers/auth-provider'
+import { canManageIntegrations } from '@/lib/permissions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,7 @@ type JiraStatus = {
 function SettingsContent() {
   const searchParams   = useSearchParams()
   const router         = useRouter()
+  const { me }         = useMe()
 
   const [teams,          setTeams]          = useState<Team[]>([])
   const [selectedTeamId, setSelectedTeamId] = useState('')
@@ -124,6 +127,7 @@ function SettingsContent() {
   }
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId)
+  const canManage = canManageIntegrations(me, selectedTeamId)
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -199,7 +203,11 @@ function SettingsContent() {
               )}
 
               <div className="mt-4 flex items-center gap-2">
-                {jiraStatus?.connected ? (
+                {!canManage ? (
+                  <p className="text-xs text-muted-foreground">
+                    Only a team admin can change this connection.
+                  </p>
+                ) : jiraStatus?.connected ? (
                   <Button
                     variant="destructive"
                     size="sm"
