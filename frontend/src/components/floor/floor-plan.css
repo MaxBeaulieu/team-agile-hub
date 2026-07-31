@@ -3,6 +3,7 @@
    by floorTokens.ts. */
 
 .fp-root {
+  position: relative;
   font-family: var(--fp-font-sans), system-ui, sans-serif;
   font-size: 14px;
   color: var(--fp-ink);
@@ -273,20 +274,26 @@ a.fp-chip {
   min-width: 0;
   display: flex;
   justify-content: center;
+  align-items: center;
   container-type: size;
 }
 
-/* Whichever of width or height runs out first caps the plan, so the box always
-   matches the SVG exactly and the overlays keep lining up with it. */
+/* The plan is not locked to its drawing ratio: it fills the stage in both axes
+   and the SVG stretches to follow (preserveAspectRatio="none"). --fp-plan-skew
+   caps how far that stretch may go, so a very tall or very wide stage letterboxes
+   instead of squashing the desks. The wrap always matches the rendered SVG box
+   exactly, so the percentage-positioned overlays keep lining up with it. */
 .fp-mapwrap {
+  --fp-plan-skew: 1.12;
   position: relative;
-  width: min(100cqw, calc(100cqh * var(--fp-plan-ratio)));
+  width: min(100cqw, calc(100cqh * var(--fp-plan-ratio) * var(--fp-plan-skew)));
+  height: min(100cqh, calc(100cqw * var(--fp-plan-skew) / var(--fp-plan-ratio)));
 }
 
 .fp-mapwrap svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 
 .fp-aside {
@@ -312,6 +319,9 @@ a.fp-chip {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 14px;
+  /* 26px control + 8px padding + 2px border: one row tall whether or not a seat
+     is selected, so the plan below never shifts. */
+  min-height: 36px;
   padding: 4px 10px 4px 12px;
   margin-bottom: 6px;
   border: 1px solid var(--fp-act-edge);
@@ -556,6 +566,13 @@ a.fp-chip {
 .fp-actbar .fp-btn {
   padding: 5px 9px;
   font-size: 12px;
+}
+
+/* Pinned rather than font-derived so the bar height cannot drift with content. */
+.fp-actbar .fp-btn,
+.fp-actbar .fp-inp {
+  height: 26px;
+  padding-block: 0;
 }
 
 .fp-actbar .fp-kit li {
@@ -902,18 +919,9 @@ div.fp-row:hover {
   border-color: var(--fp-oos-edge);
 }
 
-.fp-lg i.is-stripe {
-  border: 0;
-  background: linear-gradient(90deg, var(--fp-ink) 0 4px, var(--fp-hairline) 4px);
-}
-
-.fp-lg i.is-board {
-  border: 0;
-  width: 5px;
-  height: 14px;
-  border-radius: 3px;
-  background: var(--fp-chair);
-  opacity: 0.6;
+.fp-lg-lock {
+  font-size: 11px;
+  line-height: 1;
 }
 
 .fp-lg svg {
@@ -1025,6 +1033,10 @@ div.fp-row:hover {
   font-family: var(--fp-font-mono), monospace;
   font-size: 10.5px;
   fill: var(--fp-ink-3);
+}
+
+.fp-dlock {
+  font-size: 9px;
 }
 
 .fp-plabel {
@@ -1181,5 +1193,62 @@ div.fp-row:hover {
   .fp-root *::after {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+/* ---------- loading overlay ---------- */
+
+.fp-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fp-scrim);
+}
+
+.fp-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border: 1px solid var(--fp-hairline);
+  border-radius: 8px;
+  background: var(--fp-surface);
+  font-family: var(--fp-font-cond), system-ui, sans-serif;
+  font-size: 12.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fp-ink-2);
+}
+
+.fp-spinner {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--fp-joint);
+  border-top-color: var(--fp-act-accent);
+  animation: fp-spin 750ms linear infinite;
+}
+
+@keyframes fp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fp-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The blanket rule above would freeze the spinner mid-turn, so swap the
+   rotation for a fade that still reads as "working". */
+@media (prefers-reduced-motion: reduce) {
+  .fp-root .fp-spinner {
+    border-top-color: var(--fp-act-accent);
+    animation: fp-pulse 1600ms ease-in-out infinite !important;
   }
 }

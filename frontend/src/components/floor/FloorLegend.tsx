@@ -26,12 +26,10 @@ export function FloorLegend({ kitLayer, teams }: { kitLayer: KitLayer; teams: Le
         Out of service
       </span>
       <span className="fp-lg">
-        <i className="is-stripe" />
-        Stripe · solid = permanent, dashed = floating
-      </span>
-      <span className="fp-lg">
-        <i className="is-board" />
-        Whiteboard
+        <span className="fp-lg-lock" aria-hidden="true">
+          🔒
+        </span>
+        Permanent · no lock = floating
       </span>
 
       {kitLayer !== 'none' && (

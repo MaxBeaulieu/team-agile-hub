@@ -31,6 +31,8 @@ builder.Services.AddCors(options =>
 builder.Services.AddSingleton<SupabaseService>();
 builder.Services.AddSingleton<JiraEncryptionService>();
 builder.Services.AddSingleton<RetroParticipantService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<UserDirectoryService>();
 
 // Controllers � use Newtonsoft so supabase-csharp models serialize cleanly
 builder.Services.AddControllers().AddNewtonsoftJson(options =>

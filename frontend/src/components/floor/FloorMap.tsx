@@ -89,7 +89,12 @@ export function FloorMap({
       onClick={onBackgroundClick}
     >
       <div className="fp-mapwrap" ref={wrapRef}>
-        <svg viewBox={VIEW_BOX} role="group" aria-label="Top-down plan of the second floor">
+        <svg
+          viewBox={VIEW_BOX}
+          preserveAspectRatio="none"
+          role="group"
+          aria-label="Top-down plan of the second floor"
+        >
           <FloorShell />
           <HexRing layer={layer} />
           {ISLANDS.map((island) => (

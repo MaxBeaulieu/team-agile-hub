@@ -27,13 +27,11 @@ const KITS: { kit: SeatKit; label: string; present: (seat: Seat) => boolean }[] 
 function KitItem({
   label,
   present,
-  editable,
   busy,
   onToggle,
 }: {
   label: string
   present: boolean
-  editable: boolean
   busy: boolean
   onToggle: () => void
 }) {
@@ -41,24 +39,17 @@ function KitItem({
 
   return (
     <li className={present ? 'is-on' : 'is-off'}>
-      {editable ? (
-        <button
-          type="button"
-          className="fp-kit-toggle"
-          aria-pressed={present}
-          disabled={busy}
-          title={`Mark the ${label.toLowerCase()} as ${present ? 'missing' : 'present'}`}
-          onClick={onToggle}
-        >
-          <i aria-hidden="true" />
-          {text}
-        </button>
-      ) : (
-        <>
-          <i aria-hidden="true" />
-          {text}
-        </>
-      )}
+      <button
+        type="button"
+        className="fp-kit-toggle"
+        aria-pressed={present}
+        disabled={busy}
+        title={`Mark the ${label.toLowerCase()} as ${present ? 'missing' : 'present'}`}
+        onClick={onToggle}
+      >
+        <i aria-hidden="true" />
+        {text}
+      </button>
     </li>
   )
 }
@@ -88,8 +79,6 @@ export function SeatActionBar({
 
   const occupied = isOccupied(seat)
   const outOfService = seat.status === 'out_of_service'
-  // Whoever sits there can see the desk; everyone else has to take an admin's word.
-  const canEditKit = isAdmin || seat.isMine
 
   return (
     <div className="fp-actbar">
@@ -114,7 +103,6 @@ export function SeatActionBar({
             key={kit}
             label={label}
             present={present(seat)}
-            editable={canEditKit}
             busy={busy}
             onToggle={() => onToggleEquipment(seat, kit, !present(seat))}
           />

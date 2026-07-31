@@ -58,6 +58,9 @@ export const tokens = {
   office: '#EAE7E0',
   surface: '#FFFFFF',
   surfaceAlt: '#FDFBF6',
+
+  /* Loading scrim — translucent so the plan stays readable underneath. */
+  scrim: '#8B888073',
 } as const
 
 /** Flattened, ink-light palette used by the "Print" view. */
@@ -138,6 +141,7 @@ export const floorCssVars: Record<string, string> = {
   '--fp-planter': tokens.planter,
   '--fp-surface': tokens.surface,
   '--fp-surface-alt': tokens.surfaceAlt,
+  '--fp-scrim': tokens.scrim,
   '--fp-print-concrete': printTokens.concrete,
   '--fp-print-circulation': printTokens.circulation,
   '--fp-print-joint': printTokens.joint,

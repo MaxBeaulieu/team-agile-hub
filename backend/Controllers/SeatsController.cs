@@ -10,7 +10,7 @@ namespace Backend.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class SeatsController(SupabaseService sb) : ControllerBase
+public class SeatsController(SupabaseService sb, UserDirectoryService directory) : ControllerBase
 {
     private const int MaxNoteLength = 500;
     private const int MaxReasonLength = 500;
@@ -39,11 +39,9 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         var name = (await MyMemberships())
             .Select(m => m.DisplayName)
             .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+        if (!string.IsNullOrWhiteSpace(name)) return name.Trim();
 
-        return name
-            ?? User.FindFirstValue(ClaimTypes.Email)
-            ?? User.FindFirstValue("email")
-            ?? "Unknown";
+        return await directory.DisplayNameAsync(CurrentUserId) ?? "Unknown";
     }
 
     // ─── Read ─────────────────────────────────────────────────────────────────
@@ -56,11 +54,11 @@ public class SeatsController(SupabaseService sb) : ControllerBase
             .Order("seat_number", Ordering.Ascending)
             .Get()).Models;
 
-        var teams = await ResolveOccupantTeams(seats);
+        var occupants = await ResolveOccupants(seats);
         var defectCounts = await OpenDefectCountsBySeat();
         var me = CurrentUserId;
 
-        return Ok(seats.Select(s => ToDto(s, me, teams, defectCounts)));
+        return Ok(seats.Select(s => ToDto(s, me, occupants, defectCounts)));
     }
 
     // GET api/seats/reports?status=open
@@ -193,9 +191,6 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         var seat = await FindSeat(id);
         if (seat is null) return NotFound();
 
-        // Whoever sits there can see what is on the desk; anyone else needs to be an admin.
-        if (seat.OccupantId != CurrentUserId && !await IsAdmin()) return Forbid();
-
         seat.HasDock = req.HasDock ?? seat.HasDock;
         seat.HasTerminal = req.HasTerminal ?? seat.HasTerminal;
         seat.UpdatedAt = DateTime.UtcNow;
@@ -282,8 +277,11 @@ public class SeatsController(SupabaseService sb) : ControllerBase
         : seat.Assignment == SeatAssignment.Permanent ? "permanent"
         : "floating";
 
-    /// <summary>Occupant → their first team, so the map can stripe desks by team.</summary>
-    private async Task<Dictionary<Guid, (Guid Id, string Name)>> ResolveOccupantTeams(
+    /// <summary>
+    /// Occupant → their first team (so the map can stripe desks by team) plus the
+    /// best current name for them, which beats the snapshot taken at assign time.
+    /// </summary>
+    private async Task<Dictionary<Guid, OccupantInfo>> ResolveOccupants(
         IEnumerable<Seat> seats)
     {
         var occupantIds = seats
@@ -299,22 +297,47 @@ public class SeatsController(SupabaseService sb) : ControllerBase
             .Order("joined_at", Ordering.Ascending)
             .Get()).Models;
 
-        if (memberships.Count == 0) return new();
-
-        var teamIds = memberships.Select(m => m.TeamId.ToString()).Distinct().ToList();
-        var teamNames = (await sb.Db.From<Team>()
-            .Filter("id", Operator.In, teamIds)
-            .Get()).Models.ToDictionary(t => t.Id, t => t.Name);
-
-        return memberships
+        var byUser = memberships
             .GroupBy(m => m.UserId)
             .ToDictionary(
                 g => g.Key,
-                g =>
-                {
-                    var first = g.First();
-                    return (first.TeamId, teamNames.GetValueOrDefault(first.TeamId, "Unknown"));
-                });
+                g => (
+                    First: g.First(),
+                    Name: g.Select(m => m.DisplayName)
+                        .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))?.Trim()));
+
+        // Occupants outside every team — and members who never set a name — only
+        // exist in Supabase Auth.
+        var unnamed = occupantIds
+            .Select(Guid.Parse)
+            .Where(id => !byUser.TryGetValue(id, out var m) || string.IsNullOrWhiteSpace(m.Name))
+            .ToList();
+
+        var fromAuth = unnamed.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await directory.DisplayNamesAsync(unnamed);
+
+        var teamIds = memberships.Select(m => m.TeamId.ToString()).Distinct().ToList();
+        var teamNames = teamIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : (await sb.Db.From<Team>()
+                .Filter("id", Operator.In, teamIds)
+                .Get()).Models.ToDictionary(t => t.Id, t => t.Name);
+
+        return occupantIds.Select(Guid.Parse).ToDictionary(
+            id => id,
+            id =>
+            {
+                byUser.TryGetValue(id, out var membership);
+                var name = membership.Name ?? fromAuth.GetValueOrDefault(id);
+
+                return membership.First is null
+                    ? new OccupantInfo(null, null, name)
+                    : new OccupantInfo(
+                        membership.First.TeamId,
+                        teamNames.GetValueOrDefault(membership.First.TeamId, "Unknown"),
+                        name);
+            });
     }
 
     private async Task<Dictionary<Guid, int>> OpenDefectCountsBySeat()
@@ -329,13 +352,13 @@ public class SeatsController(SupabaseService sb) : ControllerBase
     private static SeatDto ToDto(
         Seat seat,
         Guid currentUserId,
-        Dictionary<Guid, (Guid Id, string Name)>? teams = null,
+        Dictionary<Guid, OccupantInfo>? occupants = null,
         Dictionary<Guid, int>? defectCounts = null)
     {
-        (Guid Id, string Name)? team = null;
-        if (teams is not null && seat.OccupantId is not null
-            && teams.TryGetValue(seat.OccupantId.Value, out var found))
-            team = found;
+        OccupantInfo? occupant = null;
+        if (occupants is not null && seat.OccupantId is not null
+            && occupants.TryGetValue(seat.OccupantId.Value, out var found))
+            occupant = found;
 
         return new SeatDto(
             seat.Id,
@@ -347,9 +370,9 @@ public class SeatsController(SupabaseService sb) : ControllerBase
             StatusOf(seat),
             seat.Note,
             seat.OccupantId,
-            seat.OccupantName,
-            team?.Id,
-            team?.Name,
+            occupant?.DisplayName ?? seat.OccupantName,
+            occupant?.TeamId,
+            occupant?.TeamName,
             seat.AssignedAt,
             seat.OccupantId == currentUserId,
             defectCounts?.GetValueOrDefault(seat.Id) ?? 0);
@@ -379,6 +402,8 @@ public class SeatsController(SupabaseService sb) : ControllerBase
 }
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
+
+public record OccupantInfo(Guid? TeamId, string? TeamName, string? DisplayName);
 
 public record SeatDto(
     Guid Id,

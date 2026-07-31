@@ -60,12 +60,12 @@ export const HX = 68
 export const HY = 84
 
 export const HEX_SEATS: { id: number; x: number; y: number; facing: Facing }[] = [
-  { id: 1, x: HX + 30, y: HY, facing: 'N' },
-  { id: 2, x: HX + 122, y: HY, facing: 'N' },
+  { id: 1, x: HX + 26, y: HY, facing: 'N' },
+  { id: 2, x: HX + 126, y: HY, facing: 'N' },
   { id: 3, x: HX + 152, y: HY + 60, facing: 'E' },
   { id: 4, x: HX + 152, y: HY + 120, facing: 'E' },
-  { id: 5, x: HX + 122, y: HY + 180, facing: 'S' },
-  { id: 6, x: HX + 30, y: HY + 180, facing: 'S' },
+  { id: 5, x: HX + 126, y: HY + 180, facing: 'S' },
+  { id: 6, x: HX + 26, y: HY + 180, facing: 'S' },
   { id: 7, x: HX, y: HY + 120, facing: 'W' },
   { id: 8, x: HX, y: HY + 60, facing: 'W' },
 ]
