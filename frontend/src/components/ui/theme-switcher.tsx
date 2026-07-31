@@ -21,10 +21,14 @@ const themes = [
 interface ThemeSwitcherProps {
   /** Show a minimal icon-only button (default) or a compact pill */
   variant?: 'icon' | 'pill'
+  /** Which side of the trigger the menu opens on */
+  side?: 'top' | 'bottom'
+  /** How the menu aligns against the trigger */
+  align?: 'start' | 'end'
   className?: string
 }
 
-export function ThemeSwitcher({ variant = 'icon', className }: ThemeSwitcherProps) {
+export function ThemeSwitcher({ variant = 'icon', side = 'bottom', align = 'end', className }: ThemeSwitcherProps) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
@@ -52,7 +56,7 @@ export function ThemeSwitcher({ variant = 'icon', className }: ThemeSwitcherProp
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-36">
+      <DropdownMenuContent side={side} align={align} className="w-36">
         {themes.map(({ id, label, icon: ThemeIcon }) => (
           <DropdownMenuItem
             key={id}
