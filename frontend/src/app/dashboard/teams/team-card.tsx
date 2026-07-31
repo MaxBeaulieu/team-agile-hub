@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Copy, Link2, MoreHorizontal, Pencil, Settings, Users } from 'lucide-react'
+import { Copy, Link2, MoreHorizontal, Pencil, Trash2, Users, UserCog } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
+import { useMe } from '@/components/providers/auth-provider'
+import { canManageTeam } from '@/lib/permissions'
 import { toast } from 'sonner'
+import { ManageMembersDialog } from './manage-members-dialog'
 import type { TeamWithMembers } from './page'
 
 interface Props {
@@ -24,11 +27,13 @@ interface Props {
 }
 
 export function TeamCard({ team, userId, onUpdate }: Props) {
-  const myMembership = team.team_members.find((m) => m.userId === userId)
-  const isAdmin = myMembership?.role === 'admin'
+  const { me } = useMe()
+  const isAdmin = canManageTeam(me, team.id)
 
   const [inviteOpen, setInviteOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [membersOpen, setMembersOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState('')
   const [newName, setNewName] = useState(team.name)
   const [newTerm, setNewTerm] = useState(team.sprintTerm)
@@ -61,6 +66,19 @@ export function TeamCard({ team, userId, onUpdate }: Props) {
         onUpdate()
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to update team')
+      }
+    })
+  }
+
+  function deleteTeam() {
+    startTransition(async () => {
+      try {
+        await api.delete(`/api/teams/${team.id}`)
+        toast.success(`${team.name} deleted`)
+        setDeleteOpen(false)
+        onUpdate()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to delete team')
       }
     })
   }
@@ -101,10 +119,21 @@ export function TeamCard({ team, userId, onUpdate }: Props) {
                   <Link2 className="size-3.5 mr-2" />
                   Generate invite
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setMembersOpen(true)}>
+                  <UserCog className="size-3.5 mr-2" />
+                  Manage members
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setRenameOpen(true)}>
                   <Pencil className="size-3.5 mr-2" />
                   Rename / settings
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="size-3.5 mr-2" />
+                  Delete team
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -198,6 +227,36 @@ export function TeamCard({ team, userId, onUpdate }: Props) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Members */}
+      <ManageMembersDialog
+        team={team}
+        currentUserId={userId}
+        open={membersOpen}
+        onOpenChange={setMembersOpen}
+        onUpdate={onUpdate}
+      />
+
+      {/* Delete confirmation */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {team.name}?</DialogTitle>
+            <DialogDescription>
+              This removes the team along with every sprint, retro, poker session, blocker
+              and action item that belongs to it. It cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={pending}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={deleteTeam} disabled={pending}>
+              {pending ? 'Deleting…' : 'Delete team'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

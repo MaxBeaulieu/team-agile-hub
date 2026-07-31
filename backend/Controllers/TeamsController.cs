@@ -1,21 +1,15 @@
 using Backend.Models;
 using Backend.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using static Postgrest.Constants;
-using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
-public class TeamsController(SupabaseService sb) : ControllerBase
+public class TeamsController(SupabaseService sb, AuthorizationService auth)
+    : ApiControllerBase(auth)
 {
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
-
     // GET api/teams
     [HttpGet]
     public async Task<IActionResult> GetMyTeams()
@@ -92,13 +86,7 @@ public class TeamsController(SupabaseService sb) : ControllerBase
 
         if (!teamResult.Models.Any()) return NotFound();
 
-        var memberResult = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, id.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-
-        var member = memberResult.Models.FirstOrDefault();
-        if (member?.Role != TeamRole.Admin) return Forbid();
+        if (!await IsTeamAdminAsync(id)) return Forbid();
 
         var payload = $"{id}|{DateTime.UtcNow.AddDays(7):O}";
         var token   = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload));
@@ -158,8 +146,7 @@ public class TeamsController(SupabaseService sb) : ControllerBase
         var team = result.Models.FirstOrDefault();
         if (team is null) return NotFound();
 
-        var member = team.Members.FirstOrDefault(m => m.UserId == CurrentUserId);
-        if (member?.Role != TeamRole.Admin) return Forbid();
+        if (!await IsTeamAdminAsync(id)) return Forbid();
 
         if (req.Name      is not null) team.Name      = req.Name;
         if (req.SprintTerm is not null) team.SprintTerm = req.SprintTerm;
@@ -167,8 +154,81 @@ public class TeamsController(SupabaseService sb) : ControllerBase
         await sb.Db.From<Team>().Update(team);
         return Ok(team);
     }
+
+    // DELETE api/teams/{id}
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteTeam(Guid id)
+    {
+        if (!await IsTeamAdminAsync(id)) return Forbid();
+
+        var team = (await sb.Db.From<Team>()
+            .Filter("id", Operator.Equals, id.ToString())
+            .Get()).Models.FirstOrDefault();
+
+        if (team is null) return NotFound();
+
+        // members, sprints and everything below them go with it (ON DELETE CASCADE)
+        await sb.Db.From<Team>()
+            .Filter("id", Operator.Equals, id.ToString())
+            .Delete();
+
+        return NoContent();
+    }
+
+    // PATCH api/teams/{id}/members/{userId} — promote to admin or demote to member
+    [HttpPatch("{id:guid}/members/{userId:guid}")]
+    public async Task<IActionResult> UpdateMemberRole(
+        Guid id, Guid userId, [FromBody] UpdateMemberRoleRequest req)
+    {
+        if (!await IsTeamAdminAsync(id)) return Forbid();
+
+        var members = await Auth.GetTeamMembersAsync(id);
+        var target  = members.FirstOrDefault(m => m.UserId == userId);
+        if (target is null) return NotFound();
+
+        if (target.Role == req.Role) return Ok(target);
+
+        if (req.Role == TeamRole.Member && IsLastAdmin(members, userId))
+            return BadRequest("A team must keep at least one admin. Promote someone else first.");
+
+        target.Role = req.Role;
+        await sb.Db.From<TeamMember>().Update(target);
+        return Ok(target);
+    }
+
+    // DELETE api/teams/{id}/members/{userId} — remove a member, or leave the team yourself
+    [HttpDelete("{id:guid}/members/{userId:guid}")]
+    public async Task<IActionResult> RemoveMember(Guid id, Guid userId)
+    {
+        var isSelf = userId == CurrentUserId;
+        if (!isSelf && !await IsTeamAdminAsync(id)) return Forbid();
+
+        var members = await Auth.GetTeamMembersAsync(id);
+        var target  = members.FirstOrDefault(m => m.UserId == userId);
+        if (target is null) return NotFound();
+
+        if (IsLastAdmin(members, userId))
+            return BadRequest(isSelf
+                ? "You are the last admin of this team. Promote someone else before leaving."
+                : "A team must keep at least one admin. Promote someone else first.");
+
+        await sb.Db.From<TeamMember>()
+            .Filter("id", Operator.Equals, target.Id.ToString())
+            .Delete();
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Guards the invariant that every team keeps at least one admin — otherwise the team
+    /// becomes unmanageable: nobody can invite, rename, create sprints or delete it.
+    /// </summary>
+    private static bool IsLastAdmin(List<TeamMember> members, Guid userId) =>
+        members.Any(m => m.UserId == userId && m.Role == TeamRole.Admin)
+        && members.Count(m => m.Role == TeamRole.Admin) == 1;
 }
 
 public record CreateTeamRequest(string Name, string? SprintTerm, string? DisplayName);
 public record JoinTeamRequest(string InviteToken, string? DisplayName);
 public record UpdateTeamRequest(string? Name, string? SprintTerm);
+public record UpdateMemberRoleRequest(TeamRole Role);

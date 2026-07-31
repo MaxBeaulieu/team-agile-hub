@@ -29,6 +29,7 @@ builder.Services.AddCors(options =>
 
 // Supabase client (replaces EF Core + Npgsql)
 builder.Services.AddSingleton<SupabaseService>();
+builder.Services.AddSingleton<AuthorizationService>();
 builder.Services.AddSingleton<JiraEncryptionService>();
 builder.Services.AddSingleton<RetroParticipantService>();
 

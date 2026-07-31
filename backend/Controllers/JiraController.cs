@@ -10,25 +10,13 @@ using System.Text;
 namespace Backend.Controllers;
 
 [ApiController]
-[Authorize]
 public class JiraController(
     SupabaseService sb,
     JiraEncryptionService enc,
     IHttpClientFactory httpFactory,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    AuthorizationService auth) : ApiControllerBase(auth)
 {
-    private Guid CurrentUserId =>
-        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? User.FindFirstValue("sub")!);
-
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
 
     // ─── Auth URL ─────────────────────────────────────────────────────────────
 
@@ -36,7 +24,9 @@ public class JiraController(
     [HttpGet("api/teams/{teamId:guid}/jira/auth-url")]
     public async Task<IActionResult> GetAuthUrl(Guid teamId)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        // Connecting Jira binds an Atlassian account to the whole team, so it is an
+        // admin act — members only get to read the resulting status.
+        if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
         var clientId = config["Jira:ClientId"];
         if (string.IsNullOrWhiteSpace(clientId))
@@ -166,89 +156,17 @@ public class JiraController(
     [HttpGet("api/teams/{teamId:guid}/jira/status")]
     public async Task<IActionResult> GetStatus(Guid teamId)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
         var record = (await sb.Db.From<JiraIntegration>()
             .Filter("team_id", Operator.Equals, teamId.ToString())
             .Get()).Models.FirstOrDefault();
         return Ok(new { connected = record is not null, cloudName = record?.CloudName });
     }
 
-    // ─── Token debug ──────────────────────────────────────────────────────────
-
-    // GET api/teams/{teamId}/jira/debug
-    [AllowAnonymous]
-    [HttpGet("api/teams/{teamId:guid}/jira/debug")]
-    public async Task<IActionResult> Debug(Guid teamId)
-    {
-
-        var record = (await sb.Db.From<JiraIntegration>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
-
-        if (record is null) return BadRequest("No Jira record found.");
-
-        string rawToken;
-        try { rawToken = enc.Decrypt(record.AccessTokenEncrypted); }
-        catch (Exception ex) { return BadRequest($"Decrypt failed: {ex.Message}"); }
-
-        // Decode JWT payload (middle section, base64url)
-        string? jwtScopes = null;
-        try
-        {
-            var parts = rawToken.Split('.');
-            if (parts.Length >= 2)
-            {
-                var padded = parts[1].Replace('-', '+').Replace('_', '/');
-                padded = padded.PadRight((padded.Length + 3) & ~3, '=');
-                var payload = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(padded));
-                jwtScopes = payload;
-            }
-        }
-        catch { /* not a JWT */ }
-
-        // Call accessible-resources to confirm correct cloudId
-        var http = httpFactory.CreateClient();
-        using var resReq = new HttpRequestMessage(HttpMethod.Get,
-            "https://api.atlassian.com/oauth/token/accessible-resources");
-        resReq.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", rawToken);
-        var resResp = await http.SendAsync(resReq);
-        var resBody = await resResp.Content.ReadAsStringAsync();
-
-        // Call Jira /myself to see if the token works at all
-        using var myselfReq = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"https://api.atlassian.com/ex/jira/{record.CloudId}/rest/api/3/myself");
-        myselfReq.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", rawToken);
-        var myselfResp = await http.SendAsync(myselfReq);
-        var myselfBody = await myselfResp.Content.ReadAsStringAsync();
-
-        // Test the search endpoint directly (POST /search/jql)
-        var testPayload = JsonConvert.SerializeObject(new { jql = "project is not EMPTY order by created DESC", maxResults = 1, fields = new[] { "summary" } });
-        using var searchTestReq = new HttpRequestMessage(HttpMethod.Post,
-            $"https://api.atlassian.com/ex/jira/{record.CloudId}/rest/api/3/search/jql")
-        {
-            Content = new StringContent(testPayload, Encoding.UTF8, "application/json"),
-        };
-        searchTestReq.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", rawToken);
-        var searchTestResp = await http.SendAsync(searchTestReq);
-        var searchTestBody = await searchTestResp.Content.ReadAsStringAsync();
-
-        return Ok(new
-        {
-            cloudId     = record.CloudId,
-            cloudName   = record.CloudName,
-            expiresAt   = record.TokenExpiresAt,
-            tokenPrefix = rawToken[..Math.Min(30, rawToken.Length)] + "...",
-            accessibleResources = resBody,
-            myselfStatus = (int)myselfResp.StatusCode,
-            myselfBody,
-            searchStatus = (int)searchTestResp.StatusCode,
-            searchBody = searchTestBody[..Math.Min(300, searchTestBody.Length)],
-        });
-    }
+    // NOTE: an [AllowAnonymous] `GET .../jira/debug` used to live here. It decrypted the
+    // team's stored Atlassian access token and echoed a prefix of it, plus live
+    // accessible-resources / myself responses, to any caller who knew a team id — no auth
+    // at all. Removed with the RBAC work (migration 019); use logs for troubleshooting.
 
     // ─── List Projects ────────────────────────────────────────────────────────
 
@@ -256,7 +174,7 @@ public class JiraController(
     [HttpGet("api/teams/{teamId:guid}/jira/projects")]
     public async Task<IActionResult> ListProjects(Guid teamId)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var tokenInfo = await GetValidTokenAsync(teamId);
         if (tokenInfo is null) return BadRequest("Jira is not connected for this team.");
@@ -284,7 +202,7 @@ public class JiraController(
     [HttpGet("api/teams/{teamId:guid}/jira/issues")]
     public async Task<IActionResult> SearchIssues(Guid teamId, [FromQuery] string? jql)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
         var tokenInfo = await GetValidTokenAsync(teamId);
         if (tokenInfo is null) return BadRequest("Jira is not connected for this team.");
@@ -324,7 +242,7 @@ public class JiraController(
     [HttpPost("api/teams/{teamId:guid}/jira/issues")]
     public async Task<IActionResult> CreateIssue(Guid teamId, [FromBody] CreateJiraIssueRequest req)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamMemberAsync(teamId)) return Forbid();
         if (string.IsNullOrWhiteSpace(req.ProjectKey)) return BadRequest("ProjectKey is required.");
         if (string.IsNullOrWhiteSpace(req.Summary))    return BadRequest("Summary is required.");
 
@@ -368,7 +286,7 @@ public class JiraController(
     [HttpDelete("api/teams/{teamId:guid}/jira")]
     public async Task<IActionResult> Disconnect(Guid teamId)
     {
-        if (!await IsMember(teamId)) return Forbid();
+        if (!await IsTeamAdminAsync(teamId)) return Forbid();
         await sb.Db.From<JiraIntegration>()
             .Filter("team_id", Operator.Equals, teamId.ToString())
             .Delete();

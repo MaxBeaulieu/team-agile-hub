@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react'
 import { api } from '@/lib/api'
+import { normalizeRole } from '@/lib/permissions'
 import { toast } from 'sonner'
 import type { SprintDetail, TeamMemberData } from './page'
 
@@ -70,7 +71,7 @@ function MemberRow({
 
   const initials = member.displayName
     .trim().split(' ').slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('')
-  const isAdmin = member.role === 'admin' || member.role === 'Admin'
+  const isAdmin = normalizeRole(member.role) === 'admin'
 
   return (
     <div className="grid grid-cols-[auto_1fr_1fr_1fr] items-center gap-4 py-3 border-b border-border last:border-0">

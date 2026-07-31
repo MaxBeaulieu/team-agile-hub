@@ -5,8 +5,8 @@ import { toast } from 'sonner'
 
 import './floor-plan.css'
 
-import { api } from '@/lib/api'
-import { createClient } from '@/lib/supabase/client'
+import { useMe } from '@/components/providers/auth-provider'
+import { canAdminFloor } from '@/lib/permissions'
 
 import { FloorLegend, type LegendTeam } from './FloorLegend'
 import { FloorMap } from './FloorMap'
@@ -28,12 +28,6 @@ import type {
 } from './floorTypes'
 import { computeStats, isOccupied } from './floorTypes'
 
-interface TeamSummary {
-  id: string
-  name: string
-  team_members: { userId: string; role: string }[]
-}
-
 function toMap(seats: Seat[]): SeatMap {
   return Object.fromEntries(seats.map((seat) => [seat.seatNumber, seat]))
 }
@@ -43,8 +37,13 @@ function errorMessage(error: unknown, fallback: string) {
 }
 
 export function FloorPlanPage() {
+  const { me } = useMe()
+  // The floor belongs to no team, so it is governed by the org-wide scope.
+  // (This used to be "admin of any team", which any user could self-grant by
+  // creating a throwaway team and becoming its admin.)
+  const isAdmin = canAdminFloor(me)
+
   const [seats, setSeats] = useState<Seat[]>([])
-  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -66,25 +65,10 @@ export function FloorPlanPage() {
 
     const load = async () => {
       try {
-        const [seatList, teams, { data }] = await Promise.all([
-          floorApi.listSeats(),
-          api.get<TeamSummary[]>('/api/teams'),
-          createClient().auth.getUser(),
-        ])
+        const seatList = await floorApi.listSeats()
         if (cancelled) return
 
-        const userId = data.user?.id
         setSeats(seatList)
-        // Admin-ness is per team and is the only role this app has, so being an
-        // admin of any team is what unlocks the floor-wide actions.
-        setIsAdmin(
-          Boolean(userId) &&
-            teams.some((team) =>
-              team.team_members?.some(
-                (member) => member.userId === userId && member.role?.toLowerCase() === 'admin',
-              ),
-            ),
-        )
         setLoadError(null)
       } catch (error) {
         if (!cancelled) setLoadError(errorMessage(error, 'Could not load the floor.'))
