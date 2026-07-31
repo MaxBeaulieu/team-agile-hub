@@ -123,8 +123,12 @@ function CardColumn({
             {Array.from({ length: Math.min(hiddenCount, 3) }).map((_, i) => (
               <div
                 key={i}
-                className="h-10 rounded-lg border border-dashed border-border bg-muted/30 animate-pulse"
-              />
+                className="h-10 flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 animate-pulse px-3"
+              >
+                <span className="text-xs text-muted-foreground truncate">
+                  Topic added by teammate
+                </span>
+              </div>
             ))}
             {hiddenCount > 3 && (
               <p className="text-xs text-center text-muted-foreground">
