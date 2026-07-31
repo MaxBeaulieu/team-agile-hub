@@ -90,7 +90,7 @@ on the wire.
 | POST | `/api/seats/{id}/release` | occupant or admin |
 | POST | `/api/seats/{id}/unassign` | admin only |
 | PATCH | `/api/seats/{id}/note` | any authenticated |
-| PATCH | `/api/seats/{id}/equipment` | occupant or admin |
+| PATCH | `/api/seats/{id}/equipment` | any authenticated |
 | POST | `/api/seats/{id}/reports` | any authenticated |
 | GET | `/api/seats/reports?status=` | admin only |
 | POST | `/api/seats/reports/{reportId}/close` | admin only |
@@ -132,8 +132,11 @@ column.
   was judged the wrong complexity for a 44-desk office.
 - **Seat notes are editable by anyone.** Intentional; there is no per-seat
   ownership of that field.
-- **`occupant_name` is a snapshot** taken from `team_members.display_name` at
-  assign time. There is no profiles table, so a later rename will not propagate.
+- **`occupant_name` is a snapshot** taken at assign time, but `GET /api/seats`
+  re-resolves the label: current `team_members.display_name`, then
+  `UserDirectoryService` (Supabase Auth `user_metadata.full_name`, cached 15 min)
+  for occupants who are on no team, then the stored column. There is no profiles
+  table, so those two sources are all there is.
 
 ## Verification
 

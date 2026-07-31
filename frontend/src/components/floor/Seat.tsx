@@ -136,16 +136,14 @@ export function Seat({
 
       <text x={x + 6} y={y + 14} className="fp-dnum">
         #{seat.seatNumber}
+        {seat.status === 'permanent' && (
+          <tspan dx={3} className="fp-dlock" aria-hidden="true">
+            🔒
+          </tspan>
+        )}
       </text>
 
-      {occupied && (
-        <line
-          {...stripe}
-          className="fp-stripe"
-          stroke={color}
-          strokeDasharray={seat.status === 'floating' ? '4 3' : undefined}
-        />
-      )}
+      {occupied && <line {...stripe} className="fp-stripe" stroke={color} />}
 
       {lines.length === 1 ? (
         <text x={cx} y={cy + 6} textAnchor="middle" className="fp-dname">

@@ -9,6 +9,7 @@ import { api } from '@/lib/api'
 import { createClient } from '@/lib/supabase/client'
 
 import { FloorLegend, type LegendTeam } from './FloorLegend'
+import { FloorLoadingOverlay } from './FloorLoadingOverlay'
 import { FloorMap } from './FloorMap'
 import { FloorStatsBar } from './FloorStatsBar'
 import { FloorToolbar } from './FloorToolbar'
@@ -223,7 +224,6 @@ export function FloorPlanPage() {
           />
 
           {loadError && <p className="fp-alert">{loadError}</p>}
-          {loading && !loadError && <p className="fp-detail-empty">Loading the floor…</p>}
 
           {view !== 'print' && (
             <SeatActionBar
@@ -279,6 +279,10 @@ export function FloorPlanPage() {
           <FloorStatsBar stats={stats} />
         </div>
       </div>
+
+      {(loading || pending) && !loadError && (
+        <FloorLoadingOverlay label={loading ? 'Loading the floor' : 'Saving'} />
+      )}
     </div>
   )
 }
