@@ -45,6 +45,7 @@ export type RetroSession = {
   voteCount: number;
   hideVotesUntilRevealed: boolean;
   skipMoodCheckins: boolean;
+  skipIcebreaker: boolean;
   currentSpeakerId: string | null;
   speakerOrderJson: string | null;
   icebreakerQuestion: string | null;
@@ -139,9 +140,13 @@ const PHASE_LABELS: Record<RetroPhase, string> = {
 
 function PhaseProgressBar({ session }: { session: RetroSession }) {
   // Check-In only exists to collect entry moods, so it disappears from the
-  // progress bar when the retro opted out of them (EE-165).
+  // progress bar when the retro opted out of them (EE-165). The icebreaker is
+  // opt-out in the same way.
   const phases = PHASE_ORDER.filter(
-    (p) => p !== "Completed" && !(p === "CheckIn" && session.skipMoodCheckins),
+    (p) =>
+      p !== "Completed" &&
+      !(p === "CheckIn" && session.skipMoodCheckins) &&
+      !(p === "Icebreaker" && session.skipIcebreaker),
   );
   const current =
     session.phase === "Completed"
@@ -202,7 +207,10 @@ function FacilitatorBar({
   const [advancing, setAdvancing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const label = PHASE_NEXT_LABEL[session.phase];
+  const label =
+    session.phase === "CheckIn" && session.skipIcebreaker
+      ? "Start Writing →"
+      : PHASE_NEXT_LABEL[session.phase];
   if (!label || session.phase === "Completed") return null;
 
   const warnCheckin =

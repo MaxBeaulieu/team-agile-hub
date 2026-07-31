@@ -1,19 +1,11 @@
 ﻿'use client'
 
 import { useState, useTransition } from 'react'
-import { ChevronDown, ChevronRight, MessageSquare, CheckSquare2, Plus, Trash2, Layers } from 'lucide-react'
+import { ChevronDown, ChevronRight, MessageSquare, CheckSquare2, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 
-type EpicOption = { id: string; title: string; status: string }
-
-const EPIC_STATUS_LABEL: Record<string, { label: string; className: string }> = {
-  on_track: { label: 'On Track', className: 'bg-green-500/10 text-green-500 border-green-500/20' },
-  at_risk:  { label: 'At Risk',  className: 'bg-orange-500/10 text-orange-500 border-orange-500/20' },
-  on_hold:  { label: 'On Hold',  className: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
-  done:     { label: 'Done',     className: 'bg-muted text-muted-foreground border-transparent' },
-}
 import type {
   FocusTopicData, TalkingPointData, TalkingPointNoteData,
   SprintDetail, TeamMemberData,
@@ -378,11 +370,6 @@ function TopicRow({ topic, sprint, teamId, teamMembers, onUpdate }: {
               <span className="text-sm font-medium leading-snug hover:text-primary transition-colors">
                 {topic.title}
               </span>
-              {topic.epicId && (
-                <span className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-violet-500 bg-violet-500/10 border border-violet-500/20 rounded-full px-1.5 py-0.5">
-                  <Layers className="size-2.5" /> Epic
-                </span>
-              )}
               {points.length > 0 && !expanded && (
                 <span className="ml-2 text-xs text-muted-foreground">
                   {points.length} point{points.length !== 1 ? 's' : ''}
@@ -470,25 +457,13 @@ function TopicRow({ topic, sprint, teamId, teamMembers, onUpdate }: {
 
 export function FocusTopicsSection({ sprint, teamId, teamMembers, onUpdate }: Props) {
   const [addOpen, setAddOpen] = useState(false)
-  const [addMode, setAddMode] = useState<'custom' | 'epic'>('custom')
   const [newTitle, setNewTitle] = useState('')
-  const [epics, setEpics] = useState<EpicOption[]>([])
-  const [loadingEpics, setLoadingEpics] = useState(false)
   const [pending, startTransition] = useTransition()
 
   const topics = [...sprint.focus_topics].sort((a, b) => a.order - b.order)
-  const linkedEpicIds = new Set(topics.map((t) => t.epicId).filter(Boolean))
 
-  function openAdd(mode: 'custom' | 'epic') {
-    setAddMode(mode)
+  function openAdd() {
     setAddOpen(true)
-    if (mode === 'epic' && epics.length === 0) {
-      setLoadingEpics(true)
-      api.get<EpicOption[]>(`/api/teams/${teamId}/epics`)
-        .then(setEpics)
-        .catch(() => toast.error('Failed to load epics'))
-        .finally(() => setLoadingEpics(false))
-    }
   }
 
   function closeAdd() {
@@ -513,24 +488,6 @@ export function FocusTopicsSection({ sprint, teamId, teamMembers, onUpdate }: Pr
     })
   }
 
-  function addEpicTopic(epic: EpicOption) {
-    startTransition(async () => {
-      try {
-        await api.post(`/api/teams/${teamId}/sprints/${sprint.id}/focus-topics`, {
-          title: epic.title,
-          epicId: epic.id,
-          status: 'on_track',
-        })
-        closeAdd()
-        onUpdate()
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to add epic topic')
-      }
-    })
-  }
-
-  const availableEpics = epics.filter((e) => !linkedEpicIds.has(e.id))
-
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
@@ -539,12 +496,8 @@ export function FocusTopicsSection({ sprint, teamId, teamMembers, onUpdate }: Pr
         </h2>
         <div className="flex items-center gap-1">
           <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs px-2"
-            onClick={() => openAdd('custom')}>
+            onClick={openAdd}>
             <Plus className="size-3.5" /> Add topic
-          </Button>
-          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs px-2 text-violet-500 hover:text-violet-500 hover:bg-violet-500/10"
-            onClick={() => openAdd('epic')}>
-            <Layers className="size-3.5" /> Add epic
           </Button>
         </div>
       </div>
@@ -567,7 +520,7 @@ export function FocusTopicsSection({ sprint, teamId, teamMembers, onUpdate }: Pr
           />
         ))}
 
-        {addOpen && addMode === 'custom' && (
+        {addOpen && (
           <form onSubmit={addCustomTopic} className="flex gap-2 border-t border-border pt-3 pb-3">
             <input
               autoFocus
@@ -580,39 +533,6 @@ export function FocusTopicsSection({ sprint, teamId, teamMembers, onUpdate }: Pr
             <Button type="submit" size="sm" className="h-8 text-xs px-3" disabled={pending || !newTitle.trim()}>Add</Button>
             <Button type="button" variant="ghost" size="sm" className="h-8 text-xs px-2" onClick={closeAdd}>Cancel</Button>
           </form>
-        )}
-
-        {addOpen && addMode === 'epic' && (
-          <div className="border-t border-border pt-3 pb-3 space-y-1.5">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-muted-foreground">Select an epic to add as a focus topic</p>
-              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={closeAdd}>Cancel</Button>
-            </div>
-            {loadingEpics && (
-              <p className="text-xs text-muted-foreground py-2">Loading epics...</p>
-            )}
-            {!loadingEpics && availableEpics.length === 0 && (
-              <p className="text-xs text-muted-foreground italic py-2">
-                {epics.length === 0 ? 'No epics found for this team.' : 'All epics are already added as focus topics.'}
-              </p>
-            )}
-            {!loadingEpics && availableEpics.map((epic) => {
-              const cfg = EPIC_STATUS_LABEL[epic.status] ?? EPIC_STATUS_LABEL.on_track
-              return (
-                <button
-                  key={epic.id}
-                  onClick={() => addEpicTopic(epic)}
-                  disabled={pending}
-                  className="w-full flex items-center justify-between gap-3 rounded-lg border border-border bg-background hover:bg-accent px-3 py-2 text-left transition-colors disabled:opacity-50"
-                >
-                  <span className="text-sm font-medium">{epic.title}</span>
-                  <span className={`shrink-0 inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${cfg.className}`}>
-                    {cfg.label}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
         )}
       </div>
     </section>

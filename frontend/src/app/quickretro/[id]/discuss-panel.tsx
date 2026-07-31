@@ -197,49 +197,58 @@ function ActionItemCreator({
   );
 }
 
-// One discussion topic: a single card, or a whole group collapsed into one
-// entry so grouped cards aren't discussed (and counted) twice.
-function DiscussionTopic({
+// A group is discussed once every card it holds has been marked discussed.
+function isGroupDiscussed(group: CardGroup<RetroCard>) {
+  return group.cards.every((c) => c.isDiscussed);
+}
+
+// A highlighted discussion item (the "spotlight"). Grouped cards are discussed
+// as a single item — one stop per group, mirroring how voting treats groups.
+function DiscussionGroup({
   group,
   isActive,
   isFacilitator,
   session,
-  topicActionItems,
+  groupActionItems,
   onRefresh,
   onSetActive,
-}: Readonly<{
+}: {
   group: CardGroup<RetroCard>;
   isActive: boolean;
   isFacilitator: boolean;
   session: RetroSession;
-  topicActionItems: ActionItemData[];
+  groupActionItems: ActionItemData[];
   onRefresh: () => void;
   onSetActive: (cardId: string) => void;
-}>) {
+}) {
   const [marking, setMarking] = useState(false);
 
   const anchor =
     group.cards.find((c) => c.id === group.anchorId) ?? group.cards[0];
-  // A group is discussed once every card in it is.
-  const isDiscussed = group.cards.every((c) => c.isDiscussed);
-  // Notes written before the cards were grouped live on whichever card holds
-  // them; keep editing that one so nothing is orphaned.
-  const notesCard =
-    group.cards.find((c) => c.discussionNotes?.trim()) ?? anchor;
-  const title = group.isGroup
-    ? (group.label ?? anchor.content)
-    : anchor.content;
+  const discussed = isGroupDiscussed(group);
+  // Notes live on the anchor card, but older per-card notes stay readable.
+  const otherNotes = group.cards.filter(
+    (c) => c.id !== anchor.id && c.discussionNotes?.trim(),
+  );
+
+  const statusIcon = discussed ? (
+    <CheckCircle2 className="size-4 text-primary shrink-0" />
+  ) : (
+    <Circle className="size-4 text-muted-foreground shrink-0" />
+  );
 
   async function toggleDiscussed() {
-    const next = !isDiscussed;
+    const next = !discussed;
     setMarking(true);
     try {
       await Promise.all(
-        group.cards.map((c) =>
-          api.patch(`/api/quickretro/${session.id}/cards/${c.id}`, {
-            isDiscussed: next,
-          }),
-        ),
+        group.cards
+          .filter((c) => c.isDiscussed !== next)
+          .map((c) =>
+            api.patch(`/api/quickretro/${session.id}/cards/${c.id}`, {
+              isDiscussed: next,
+            }),
+          ),
       );
       onRefresh();
     } catch (err) {
@@ -251,42 +260,66 @@ function DiscussionTopic({
     }
   }
 
-  const statusIcon = isDiscussed ? (
-    <CheckCircle2 className="size-4 text-primary shrink-0" />
-  ) : (
-    <Circle className="size-4 text-muted-foreground shrink-0" />
-  );
-
-  let toneClass = "border-border bg-card";
-  if (isActive) toneClass = "border-primary bg-primary/5 shadow-md";
-  else if (isDiscussed) toneClass = "border-border bg-muted/30 opacity-60";
-
   return (
-    <div className={`rounded-xl border-2 transition-all ${toneClass}`}>
+    <div
+      className={[
+        "rounded-xl border-2 transition-all",
+        isActive
+          ? "border-primary bg-primary/5 shadow-md"
+          : discussed
+            ? "border-border bg-muted/30 opacity-60"
+            : "border-border bg-card",
+      ].join(" ")}
+    >
       <div className="px-4 py-3 space-y-2">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-start gap-2 min-w-0">
             {isFacilitator ? (
               <button
                 onClick={toggleDiscussed}
                 disabled={marking}
-                aria-pressed={isDiscussed}
+                aria-pressed={discussed}
                 title={
-                  isDiscussed ? "Mark as not discussed" : "Mark as discussed"
+                  discussed ? "Mark as not discussed" : "Mark as discussed"
                 }
-                className="shrink-0 rounded-full text-muted-foreground transition-colors hover:text-primary disabled:opacity-50"
+                className="shrink-0 mt-0.5 rounded-full transition-colors hover:text-primary disabled:opacity-50"
               >
                 {statusIcon}
               </button>
             ) : (
               statusIcon
             )}
-            <p className="text-sm leading-snug whitespace-pre-wrap break-words">
-              {title}
-            </p>
+            <div className="min-w-0 space-y-1">
+              {group.label && (
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {group.label}
+                </p>
+              )}
+              {group.isGroup ? (
+                <ul className="space-y-1">
+                  {group.cards.map((c) => (
+                    <li
+                      key={c.id}
+                      className="text-sm leading-snug whitespace-pre-wrap break-words before:mr-1.5 before:text-muted-foreground before:content-['•']"
+                    >
+                      {c.content}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm leading-snug whitespace-pre-wrap break-words">
+                  {anchor.content}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {group.isGroup && (
+              <span className="rounded-full bg-muted text-muted-foreground text-[11px] font-semibold px-2 py-0.5 tabular-nums">
+                {group.cards.length} cards
+              </span>
+            )}
             {group.totalVotes > 0 && (
               <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[11px] font-semibold px-2 py-0.5 tabular-nums">
                 {group.totalVotes} 🔥
@@ -295,45 +328,34 @@ function DiscussionTopic({
           </div>
         </div>
 
-        {/* Grouped cards: the individual card texts behind this one topic */}
-        {group.isGroup && (
-          <div className="space-y-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {group.cards.length} cards
-            </p>
-            <ul className="space-y-1">
-              {group.cards.map((card) => (
-                <li
-                  key={card.id}
-                  className="rounded-md border border-border/60 bg-card px-2 py-1.5 text-xs leading-snug whitespace-pre-wrap break-words"
-                >
-                  {card.content}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Notes editor (only on the spotlight topic) */}
+        {/* Notes editor (only on the active group) */}
         {isActive && (
           <div className="mt-2 rounded-md border border-border bg-background px-2.5 py-2">
             <NotesEditor
-              card={notesCard}
+              card={anchor}
               session={session}
               onRefresh={onRefresh}
             />
           </div>
         )}
 
-        {/* Saved notes stay readable once the topic is no longer the spotlight */}
-        {!isActive && notesCard.discussionNotes?.trim() && (
+        {/* Saved notes stay readable once the group is no longer the spotlight */}
+        {!isActive && anchor.discussionNotes?.trim() && (
           <p className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words">
-            {notesCard.discussionNotes}
+            {anchor.discussionNotes}
           </p>
         )}
+        {otherNotes.map((c) => (
+          <p
+            key={c.id}
+            className="mt-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground whitespace-pre-wrap break-words"
+          >
+            {c.discussionNotes}
+          </p>
+        ))}
 
-        {/* Action items saved on any card in this topic */}
-        <CardActionItems items={topicActionItems} className="pt-1" />
+        {/* Action items saved anywhere in this group */}
+        <CardActionItems items={groupActionItems} className="pt-1" />
 
         {/* Controls */}
         {isActive && (
@@ -343,7 +365,7 @@ function DiscussionTopic({
               session={session}
               onRefresh={onRefresh}
             />
-            {isFacilitator && !isDiscussed && (
+            {isFacilitator && !discussed && (
               <Button
                 size="sm"
                 variant="outline"
@@ -358,8 +380,8 @@ function DiscussionTopic({
           </div>
         )}
 
-        {/* Jump to topic (facilitator, non-active) */}
-        {isFacilitator && !isActive && !isDiscussed && (
+        {/* Jump to group (facilitator, non-active) */}
+        {isFacilitator && !isActive && !discussed && (
           <button
             onClick={() => onSetActive(anchor.id)}
             className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary transition-colors"
@@ -398,23 +420,21 @@ export function DiscussPanel({
     }
   }
 
-  // A group is one topic: it is discussed, voted on and counted as a single item.
+  // Grouped cards are discussed as a single item, the way they're voted on.
   const groups = groupCards(cards);
-  const isGroupDiscussed = (g: CardGroup<RetroCard>) =>
-    g.cards.every((c) => c.isDiscussed);
 
   // Sort: not-discussed by votes desc, then discussed
   const sorted = [...groups].sort((a, b) => {
-    const aDone = isGroupDiscussed(a);
-    const bDone = isGroupDiscussed(b);
-    if (aDone !== bDone) return aDone ? 1 : -1;
+    const aDiscussed = isGroupDiscussed(a);
+    const bDiscussed = isGroupDiscussed(b);
+    if (aDiscussed !== bDiscussed) return aDiscussed ? 1 : -1;
     const diff = b.totalVotes - a.totalVotes;
     if (diff !== 0) return diff;
     return a.key.localeCompare(b.key);
   });
 
   const discussedCount = groups.filter(isGroupDiscussed).length;
-  const totalTopics = groups.length;
+  const totalGroups = groups.length;
 
   const itemsByCard = actionItems.reduce<Record<string, ActionItemData[]>>(
     (acc, item) => {
@@ -435,11 +455,12 @@ export function DiscussPanel({
         <div className="space-y-1">
           <h2 className="text-base font-semibold">Discuss</h2>
           <p className="text-xs text-muted-foreground">
-            Cards sorted by votes. Facilitator selects what to discuss next.
+            Topics sorted by votes — grouped cards are discussed together.
+            Facilitator selects what to discuss next.
           </p>
         </div>
         <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-          {discussedCount}/{totalTopics} topics discussed
+          {discussedCount}/{totalGroups} topics discussed
         </div>
       </div>
 
@@ -449,8 +470,8 @@ export function DiscussPanel({
           className="h-full rounded-full bg-primary transition-all"
           style={{
             width:
-              totalTopics > 0
-                ? `${(discussedCount / totalTopics) * 100}%`
+              totalGroups > 0
+                ? `${(discussedCount / totalGroups) * 100}%`
                 : "0%",
           }}
         />
@@ -459,7 +480,7 @@ export function DiscussPanel({
       {/* Topics */}
       <div className="space-y-3">
         {sorted.map((group) => (
-          <DiscussionTopic
+          <DiscussionGroup
             key={group.key}
             group={group}
             isActive={group.cards.some(
@@ -467,7 +488,7 @@ export function DiscussPanel({
             )}
             isFacilitator={isFacilitator}
             session={session}
-            topicActionItems={group.cards.flatMap(
+            groupActionItems={group.cards.flatMap(
               (c) => itemsByCard[c.id] ?? [],
             )}
             onRefresh={onRefresh}
