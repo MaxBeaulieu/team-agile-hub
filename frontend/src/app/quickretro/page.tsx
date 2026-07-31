@@ -81,6 +81,7 @@ export default function QuickRetroListPage() {
   const [votes, setVotes] = useState(5);
   const [hideVotes, setHideVotes] = useState(false);
   const [skipMood, setSkipMood] = useState(false);
+  const [skipIcebreaker, setSkipIcebreaker] = useState(false);
 
   const sortedSessions = useMemo(
     () =>
@@ -119,6 +120,7 @@ export default function QuickRetroListPage() {
         voteCount: votes,
         hideVotesUntilRevealed: hideVotes,
         skipMoodCheckins: skipMood,
+        skipIcebreaker,
       });
 
       setOpen(false);
@@ -127,6 +129,7 @@ export default function QuickRetroListPage() {
       setVotes(5);
       setHideVotes(false);
       setSkipMood(false);
+      setSkipIcebreaker(false);
       router.push(`/quickretro/${created.id}`);
     } catch (err) {
       toast.error(
@@ -266,6 +269,16 @@ export default function QuickRetroListPage() {
                 className="accent-primary"
               />
               Skip mood check-in steps
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={skipIcebreaker}
+                onChange={(e) => setSkipIcebreaker(e.target.checked)}
+                className="accent-primary"
+              />
+              Skip icebreaker round
             </label>
           </div>
 

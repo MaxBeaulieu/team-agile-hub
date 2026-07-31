@@ -51,12 +51,18 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         return session?.FacilitatorId == CurrentUserId ? session : null;
     }
 
-    private static RetroPhase NextPhase(RetroPhase current)
+    private static RetroPhase NextPhase(RetroSession session)
     {
-        var idx = Array.IndexOf(PhaseOrder, current);
-        return idx >= 0 && idx < PhaseOrder.Length - 1
+        var idx = Array.IndexOf(PhaseOrder, session.Phase);
+        var next = idx >= 0 && idx < PhaseOrder.Length - 1
             ? PhaseOrder[idx + 1]
             : RetroPhase.Completed;
+
+        // The icebreaker round is opt-out, so hop straight to Write (EE-165).
+        if (next == RetroPhase.Icebreaker && session.SkipIcebreaker)
+            next = RetroPhase.Write;
+
+        return next;
     }
 
     /// <summary>Random icebreaker from the library, avoiding <paramref name="exclude"/> when possible.</summary>
@@ -105,15 +111,18 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
             VoteCount = req.VoteCount ?? 5,
             HideVotesUntilRevealed = req.HideVotesUntilRevealed ?? false,
             SkipMoodCheckins = req.SkipMoodCheckins ?? false,
+            SkipIcebreaker = req.SkipIcebreaker ?? false,
         };
 
         // Without the mood ritual there is nothing to do in the Check-In phase,
-        // so the retro opens on the icebreaker instead (EE-165). The question is
-        // normally drawn when leaving Check-In, so draw it here.
+        // so the retro opens on the icebreaker instead (EE-165) — or on Write
+        // when the icebreaker is skipped too. The question is normally drawn
+        // when leaving Check-In, so draw it here.
         if (session.SkipMoodCheckins)
         {
-            session.Phase = RetroPhase.Icebreaker;
-            session.IcebreakerQuestion = (await PickIcebreakerAsync())?.Text;
+            session.Phase = session.SkipIcebreaker ? RetroPhase.Write : RetroPhase.Icebreaker;
+            if (!session.SkipIcebreaker)
+                session.IcebreakerQuestion = (await PickIcebreakerAsync())?.Text;
         }
 
         var created = (await sb.Db.From<RetroSession>().Insert(session)).Models.First();
@@ -184,7 +193,7 @@ public class QuickRetroController(SupabaseService sb, RetroParticipantService pa
         if (session is null) return NotFound();
         if (session.Phase == RetroPhase.Completed) return BadRequest("Retro is already completed.");
 
-        var next = NextPhase(session.Phase);
+        var next = NextPhase(session);
 
         if (session.Phase == RetroPhase.CheckIn && next == RetroPhase.Icebreaker)
         {
@@ -533,7 +542,8 @@ public record QuickCreateRetroRequest(
     string? ColumnsJson,
     int? VoteCount,
     bool? HideVotesUntilRevealed,
-    bool? SkipMoodCheckins);
+    bool? SkipMoodCheckins,
+    bool? SkipIcebreaker);
 
 public record QuickAddCardRequest(string Column, string Content);
 

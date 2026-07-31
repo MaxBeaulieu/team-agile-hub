@@ -55,6 +55,10 @@ public class RetroSession : BaseModel
     [Column("skip_mood_checkins")]
     public bool SkipMoodCheckins { get; set; } = false;
 
+    /// <summary>Run this retro without the icebreaker round</summary>
+    [Column("skip_icebreaker")]
+    public bool SkipIcebreaker { get; set; } = false;
+
     /// <summary>UserId of the person currently spotlighted in icebreaker</summary>
     [Column("current_speaker_id")]
     public Guid? CurrentSpeakerId { get; set; }
