@@ -1,82 +1,93 @@
-'use client'
+"use client";
 
-import { useEffect, useRef, useState } from 'react'
-import { api } from '@/lib/api'
-import { toast } from 'sonner'
-import { Plus, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import type { RetroSession, RetroCard } from './page'
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
+import { Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { RetroSession, RetroCard } from "./page";
 
 type Props = {
-  session: RetroSession
-  cards: RetroCard[]
-  hiddenCounts: Record<string, number>
-  currentUserId: string
-  teamId: string
-  onRefresh: () => void
-}
+  session: RetroSession;
+  cards: RetroCard[];
+  hiddenCounts: Record<string, number>;
+  currentUserId: string;
+  teamId: string;
+  onRefresh: () => void;
+};
 
 function CardColumn({
-  column, cards, hiddenCount, currentUserId, session, teamId, onRefresh,
+  column,
+  cards,
+  hiddenCount,
+  currentUserId,
+  session,
+  teamId,
+  onRefresh,
 }: {
-  column: string
-  cards: RetroCard[]
-  hiddenCount: number
-  currentUserId: string
-  session: RetroSession
-  teamId: string
-  onRefresh: () => void
+  column: string;
+  cards: RetroCard[];
+  hiddenCount: number;
+  currentUserId: string;
+  session: RetroSession;
+  teamId: string;
+  onRefresh: () => void;
 }) {
-  const [text, setText]     = useState('')
-  const [saving, setSaving] = useState(false)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   async function addCard() {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    setSaving(true)
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSaving(true);
     try {
       await api.post(`/api/teams/${teamId}/retro/${session.id}/cards`, {
         column,
         content: trimmed,
-      })
-      setText('')
-      onRefresh()
+      });
+      setText("");
+      onRefresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add card')
+      toast.error(err instanceof Error ? err.message : "Failed to add card");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function deleteCard(cardId: string) {
-    setDeletingId(cardId)
+    setDeletingId(cardId);
     try {
-      await api.delete(`/api/teams/${teamId}/retro/${session.id}/cards/${cardId}`)
-      onRefresh()
+      await api.delete(
+        `/api/teams/${teamId}/retro/${session.id}/cards/${cardId}`,
+      );
+      onRefresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete card')
+      toast.error(err instanceof Error ? err.message : "Failed to delete card");
     } finally {
-      setDeletingId(null)
+      setDeletingId(null);
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      addCard()
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      addCard();
     }
   }
 
   // Auto-resize textarea
   function handleTextChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setText(e.target.value)
-    const el = textareaRef.current
-    if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }
+    setText(e.target.value);
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
   }
 
-  const myCards = cards.filter(c => c.column === column)
+  const myCards = cards.filter((c) => c.column === column);
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
@@ -84,19 +95,21 @@ function CardColumn({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">{column}</h3>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {myCards.length} card{myCards.length !== 1 ? 's' : ''}
+          {myCards.length} card{myCards.length !== 1 ? "s" : ""}
           {hiddenCount > 0 && ` · ${hiddenCount} hidden`}
         </span>
       </div>
 
       {/* Cards */}
       <div className="flex flex-col gap-2">
-        {myCards.map(card => (
+        {myCards.map((card) => (
           <div
             key={card.id}
             className="group rounded-lg border border-border bg-card px-3 py-2.5 text-sm leading-snug relative"
           >
-            <p className="pr-5 whitespace-pre-wrap break-words">{card.content}</p>
+            <p className="pr-5 whitespace-pre-wrap break-words">
+              {card.content}
+            </p>
             {card.authorId === currentUserId && (
               <button
                 onClick={() => deleteCard(card.id)}
@@ -115,8 +128,12 @@ function CardColumn({
             {Array.from({ length: Math.min(hiddenCount, 3) }).map((_, i) => (
               <div
                 key={i}
-                className="h-10 rounded-lg border border-dashed border-border bg-muted/30 animate-pulse"
-              />
+                className="h-10 flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 animate-pulse px-3"
+              >
+                <span className="text-xs text-muted-foreground truncate">
+                  Topic added by teammate
+                </span>
+              </div>
             ))}
             {hiddenCount > 3 && (
               <p className="text-xs text-center text-muted-foreground">
@@ -151,31 +168,40 @@ function CardColumn({
         </div>
       </div>
     </div>
-  )
+  );
 }
 
-export function WritePanel({ session, cards, hiddenCounts, currentUserId, teamId, onRefresh }: Props) {
-  const columns: string[] = JSON.parse(session.columnsJson)
+export function WritePanel({
+  session,
+  cards,
+  hiddenCounts,
+  currentUserId,
+  teamId,
+  onRefresh,
+}: Props) {
+  const columns: string[] = JSON.parse(session.columnsJson);
 
   return (
     <div className="p-6 space-y-4">
       <div className="space-y-1">
         <h2 className="text-base font-semibold">Write</h2>
         <p className="text-xs text-muted-foreground">
-          Add cards to any column. Cards are hidden from others until the next phase.
-          Press Enter to add quickly.
+          Add cards to any column. Cards are hidden from others until the next
+          phase. Press Enter to add quickly.
         </p>
       </div>
 
       <div
         className="grid gap-4"
-        style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
+        style={{
+          gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+        }}
       >
-        {columns.map(col => (
+        {columns.map((col) => (
           <CardColumn
             key={col}
             column={col}
-            cards={cards.filter(c => c.column === col)}
+            cards={cards.filter((c) => c.column === col)}
             hiddenCount={hiddenCounts[col] ?? 0}
             currentUserId={currentUserId}
             session={session}
@@ -185,5 +211,5 @@ export function WritePanel({ session, cards, hiddenCounts, currentUserId, teamId
         ))}
       </div>
     </div>
-  )
+  );
 }
