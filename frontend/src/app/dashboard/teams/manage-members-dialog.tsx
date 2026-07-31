@@ -88,8 +88,7 @@ export function ManageMembersDialog({
         <div className="max-h-80 space-y-2 overflow-y-auto">
           {members.map((m) => {
             const locked = isLastAdmin(m.role)
-            const busy = pending && busyId === m.userId
-
+            const busy = pending || busyId !== null
             return (
               <div key={m.id} className="flex items-center gap-2">
                 <Avatar className="size-7 shrink-0">
