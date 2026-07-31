@@ -29,7 +29,7 @@
 -- reads. A trigger keeps the second in sync with the first.
 -- ──────────────────────────────────────────────────────────────
 create table if not exists platform_admin_allowlist (
-  email    text primary key,
+  email    text primary key check (email = lower(email)),
   note     text,
   added_at timestamptz not null default now()
 );
