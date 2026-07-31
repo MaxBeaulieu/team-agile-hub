@@ -41,7 +41,6 @@ export type FocusTopicData = {
   content: string | null
   status: FocusTopicStatus
   order: number
-  epicId: string | null
   talking_points: TalkingPointData[]
 }
 
