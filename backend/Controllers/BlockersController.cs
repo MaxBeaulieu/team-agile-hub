@@ -1,28 +1,23 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
+using Backend.Realtime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class BlockersController(SupabaseService sb) : ControllerBase
+public class BlockersController(AppDbContext db, ILiveNotifier live) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? User.FindFirstValue("sub")!);
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
     // ─── List ─────────────────────────────────────────────────────────────────
 
@@ -35,18 +30,19 @@ public class BlockersController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var query = sb.Db.From<Blocker>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("created_at", Ordering.Descending);
+        IQueryable<Blocker> query = db.Blockers.AsNoTracking().Where(b => b.TeamId == teamId);
 
         if (sprintId.HasValue)
-            query = query.Filter("sprint_id", Operator.Equals, sprintId.Value.ToString());
+        {
+            query = query.Where(b => b.SprintId == sprintId.Value);
+        }
 
-        if (!string.IsNullOrWhiteSpace(status))
-            query = query.Filter("status", Operator.Equals, status);
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<BlockerStatus>(status, out var statusFilter))
+        {
+            query = query.Where(b => b.Status == statusFilter);
+        }
 
-        var result = await query.Get();
-        return Ok(result.Models);
+        return Ok(await query.OrderByDescending(b => b.CreatedAt).ToListAsync());
     }
 
     // ─── Create ───────────────────────────────────────────────────────────────
@@ -71,8 +67,10 @@ public class BlockersController(SupabaseService sb) : ControllerBase
             JiraIssueId  = req.JiraIssueId?.Trim(),
         };
 
-        var inserted = (await sb.Db.From<Blocker>().Insert(blocker)).Models.First();
-        return Ok(inserted);
+        db.Blockers.Add(blocker);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Blockers(teamId));
+        return Ok(blocker);
     }
 
     // ─── Update ───────────────────────────────────────────────────────────────
@@ -84,10 +82,7 @@ public class BlockersController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var blocker = (await sb.Db.From<Blocker>()
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var blocker = await db.Blockers.FirstOrDefaultAsync(b => b.Id == id && b.TeamId == teamId);
 
         if (blocker is null) return NotFound();
 
@@ -98,7 +93,8 @@ public class BlockersController(SupabaseService sb) : ControllerBase
         if (req.SprintId    is not null) blocker.SprintId    = req.SprintId == Guid.Empty ? null : req.SprintId;
         if (req.JiraIssueId is not null) blocker.JiraIssueId = req.JiraIssueId.Trim() == "" ? null : req.JiraIssueId.Trim();
 
-        await sb.Db.From<Blocker>().Update(blocker);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Blockers(teamId));
         return Ok(blocker);
     }
 
@@ -110,14 +106,13 @@ public class BlockersController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var blocker = (await sb.Db.From<Blocker>()
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var blocker = await db.Blockers.FirstOrDefaultAsync(b => b.Id == id && b.TeamId == teamId);
 
         if (blocker is null) return NotFound();
 
-        await sb.Db.From<Blocker>().Delete(blocker);
+        db.Blockers.Remove(blocker);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Blockers(teamId));
         return NoContent();
     }
 }

@@ -1,16 +1,20 @@
+using Backend.Data;
 using Backend.Models;
+using Backend.Realtime;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
-using static Postgrest.Constants;
+using Npgsql;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class RetroController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
+public class RetroController(AppDbContext db, RetroParticipantService participants, ILiveNotifier live)
+    : ControllerBase
 {
     // Matches the MaxLength on RetroSession.IcebreakerQuestion.
     private const int MaxIcebreakerLength = 500;
@@ -26,14 +30,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         RetroPhase.WrapUp,  RetroPhase.Completed,
     ];
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
     // Team members can always act. Invite-link joiners (anonymous or logged-in
     // guests who aren't on the team) can act if they've joined this specific
@@ -42,46 +40,30 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
     {
         if (await IsMember(teamId)) return true;
 
-        var r = await sb.Db.From<RetroParticipant>()
-            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
-            .Filter("user_id",          Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
+        return await db.RetroParticipants.AsNoTracking()
+            .AnyAsync(p => p.RetroSessionId == sessionId && p.UserId == CurrentUserId);
     }
 
     // Verify sprint belongs to team, then load retro session for that sprint.
     private async Task<(Sprint? sprint, RetroSession? session)> GetSprintAndSession(Guid teamId, Guid sprintId)
     {
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id",      Operator.Equals, sprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
-
+        var sprint = await db.Sprints.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sprintId && s.TeamId == teamId);
         if (sprint is null) return (null, null);
 
-        var session = (await sb.Db.From<RetroSession>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get()).Models.FirstOrDefault();
-
+        var session = await db.RetroSessions.FirstOrDefaultAsync(s => s.SprintId == sprintId);
         return (sprint, session);
     }
 
     // Load session by ID, verify the sprint it belongs to is in the given team.
     private async Task<RetroSession?> GetSessionById(Guid teamId, Guid sessionId)
     {
-        var session = (await sb.Db.From<RetroSession>()
-            .Filter("id", Operator.Equals, sessionId.ToString())
-            .Get()).Models.FirstOrDefault();
-        if (session is null) return null;
+        var session = await db.RetroSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
+        if (session is null || !session.SprintId.HasValue) return null;
 
-        if (!session.SprintId.HasValue) return null;
+        var belongsToTeam = await db.Sprints.AsNoTracking()
+            .AnyAsync(s => s.Id == session.SprintId.Value && s.TeamId == teamId);
 
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id",      Operator.Equals, session.SprintId.Value.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
-
-        return sprint is null ? null : session;
+        return belongsToTeam ? session : null;
     }
 
     private static RetroPhase NextPhase(RetroSession session)
@@ -107,16 +89,11 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id",      Operator.Equals, sprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var sprint = await db.Sprints.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sprintId && s.TeamId == teamId);
         if (sprint is null) return NotFound("Sprint not found.");
 
         // Idempotent: return existing session if one already exists for this sprint
-        var existing = (await sb.Db.From<RetroSession>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.RetroSessions.AsNoTracking().FirstOrDefaultAsync(s => s.SprintId == sprintId);
         if (existing is not null) return Ok(existing);
 
         var session = new RetroSession
@@ -129,9 +106,26 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             HideVotesUntilRevealed = req.HideVotesUntilRevealed ?? false,
             SkipIcebreaker         = req.SkipIcebreaker ?? false,
         };
+        db.RetroSessions.Add(session);
 
-        var created = (await sb.Db.From<RetroSession>().Insert(session)).Models.First();
-        return Ok(created);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        {
+            // Two concurrent calls raced to create the first session for this sprint —
+            // the partial unique index on sprint_id (Phase 1, RetroSessionConfiguration)
+            // rejects the loser. Re-read and return the winner instead of erroring,
+            // matching this endpoint's existing idempotent contract. Same pattern as
+            // RetroParticipantService.EnsureParticipantAsync's 23505 handling.
+            var winner = await db.RetroSessions.AsNoTracking().FirstAsync(s => s.SprintId == sprintId);
+            live.Touch(Topics.Retro(winner.Id));
+            return Ok(winner);
+        }
+
+        live.Touch(Topics.Retro(session.Id));
+        return Ok(session);
     }
 
     // ─── Get full state ───────────────────────────────────────────────────────
@@ -153,12 +147,12 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
 
         var userId = CurrentUserId;
 
-        // All cards (backend bypasses RLS)
-        var allCards = (await sb.Db.From<RetroCard>()
-            .Select("*, retro_votes(*)")
-            .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-            .Order("created_at", Ordering.Ascending)
-            .Get()).Models;
+        // All cards (backend has no RLS to bypass — see architecture doc §4.1)
+        var allCards = await db.RetroCards.AsNoTracking()
+            .Include(c => c.Votes)
+            .Where(c => c.RetroSessionId == session.Id)
+            .OrderBy(c => c.CreatedAt)
+            .ToListAsync();
 
         // Cards visible to current user: own + revealed
         var visibleCards = allCards
@@ -190,22 +184,21 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             foreach (var card in visibleCards)
                 card.Votes = card.Votes.Where(v => v.UserId == userId).ToList();
         }
-        var moodCheckins = (await sb.Db.From<MoodCheckin>()
-            .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-            .Get()).Models;
 
-        var teamMembers = (await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault()?.Members ?? new();
+        var moodCheckins = await db.MoodCheckins.AsNoTracking()
+            .Where(m => m.RetroSessionId == session.Id)
+            .ToListAsync();
+
+        var teamMembers = await db.TeamMembers.AsNoTracking()
+            .Where(m => m.TeamId == teamId)
+            .ToListAsync();
 
         // Retro action items for this sprint — the Discuss panel renders them on
         // the card they came from and the wrap-up lists them per card (EE-160).
-        var actionItems = (await sb.Db.From<ActionItem>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Filter("type",      Operator.Equals, "retro")
-            .Order("created_at", Ordering.Ascending)
-            .Get()).Models;
+        var actionItems = await db.ActionItems.AsNoTracking()
+            .Where(a => a.SprintId == sprintId && a.Type == ActionItemType.Retro)
+            .OrderBy(a => a.CreatedAt)
+            .ToListAsync();
 
         return Ok(new
         {
@@ -237,7 +230,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (req.VoteCount.HasValue)                 session.VoteCount              = req.VoteCount.Value;
         if (req.HideVotesUntilRevealed.HasValue)    session.HideVotesUntilRevealed = req.HideVotesUntilRevealed.Value;
 
-        await sb.Db.From<RetroSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(session);
     }
 
@@ -266,8 +260,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             session.CurrentSpeakerId = shuffled.Any() ? Guid.Parse(shuffled[0]) : null;
 
             // Pick a random icebreaker
-            var icebreakers = (await sb.Db.From<Icebreaker>().Get()).Models;
-            if (icebreakers.Any())
+            var icebreakers = await db.Icebreakers.AsNoTracking().ToListAsync();
+            if (icebreakers.Count > 0)
             {
                 var pick = icebreakers[Random.Shared.Next(icebreakers.Count)];
                 session.IcebreakerQuestion = pick.Text;
@@ -275,17 +269,16 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         }
         else if (session.Phase == RetroPhase.Write && next == RetroPhase.Group)
         {
-            // Reveal all cards simultaneously
-            var cards = (await sb.Db.From<RetroCard>()
-                .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-                .Get()).Models;
-
-            foreach (var c in cards) c.IsRevealed = true;
-            if (cards.Any()) await sb.Db.From<RetroCard>().Upsert(cards);
+            // Reveal all cards simultaneously — bulk update instead of a
+            // fetch-then-per-row-upsert (architecture doc §3.8).
+            await db.RetroCards
+                .Where(c => c.RetroSessionId == session.Id)
+                .ExecuteUpdateAsync(c => c.SetProperty(x => x.IsRevealed, true));
         }
 
         session.Phase = next;
-        await sb.Db.From<RetroSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(session);
     }
 
@@ -310,9 +303,11 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             Content        = req.Content.Trim(),
         };
 
-        var inserted = (await sb.Db.From<RetroCard>().Insert(card)).Models.First();
-        inserted.Votes = new();
-        return Ok(inserted);
+        db.RetroCards.Add(card);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
+        card.Votes = new();
+        return Ok(card);
     }
 
     // PATCH api/teams/{teamId}/retro/{id}/cards/{cardId}
@@ -324,10 +319,7 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (session is null) return NotFound();
         if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
 
-        var card = (await sb.Db.From<RetroCard>()
-            .Filter("id",               Operator.Equals, cardId.ToString())
-            .Filter("retro_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var card = await db.RetroCards.FirstOrDefaultAsync(c => c.Id == cardId && c.RetroSessionId == id);
         if (card is null) return NotFound();
 
         // Content edit: own card, Write phase only
@@ -365,7 +357,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             card.IsDiscussed = req.IsDiscussed.Value;
         }
 
-        await sb.Db.From<RetroCard>().Update(card);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(card);
     }
 
@@ -379,16 +372,13 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (session.Phase != RetroPhase.Write)
             return BadRequest("Cards can only be deleted during the Write phase.");
 
-        var card = (await sb.Db.From<RetroCard>()
-            .Filter("id",               Operator.Equals, cardId.ToString())
-            .Filter("retro_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var card = await db.RetroCards.FirstOrDefaultAsync(c => c.Id == cardId && c.RetroSessionId == id);
         if (card is null) return NotFound();
         if (card.AuthorId != CurrentUserId) return Forbid();
 
-        await sb.Db.From<RetroCard>()
-            .Filter("id", Operator.Equals, cardId.ToString())
-            .Delete();
+        db.RetroCards.Remove(card);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return NoContent();
     }
 
@@ -411,23 +401,15 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             return BadRequest($"Vote budget exceeded. Maximum is {session.VoteCount} votes.");
 
         // Get all card IDs in this session
-        var cardIds = (await sb.Db.From<RetroCard>()
-            .Select("id")
-            .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-            .Get()).Models.Select(c => c.Id.ToString()).ToHashSet();
-
-        // Delete current user's votes for all cards in this session
-        foreach (var cid in cardIds)
-        {
-            await sb.Db.From<RetroVote>()
-                .Filter("retro_card_id", Operator.Equals, cid)
-                .Filter("user_id",       Operator.Equals, CurrentUserId.ToString())
-                .Delete();
-        }
+        var cardIdGuids = await db.RetroCards.AsNoTracking()
+            .Where(c => c.RetroSessionId == session.Id)
+            .Select(c => c.Id)
+            .ToListAsync();
+        var cardIdStrings = cardIdGuids.Select(g => g.ToString()).ToHashSet();
 
         // Insert new votes (count > 0 only, skip invalid cardIds)
         var votes = req
-            .Where(v => v.Count > 0 && cardIds.Contains(v.CardId))
+            .Where(v => v.Count > 0 && cardIdStrings.Contains(v.CardId))
             .Select(v => new RetroVote
             {
                 RetroCardId = Guid.Parse(v.CardId),
@@ -435,7 +417,23 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
                 Count       = v.Count,
             }).ToList();
 
-        if (votes.Any()) await sb.Db.From<RetroVote>().Insert(votes);
+        // Delete-then-insert wrapped in one transaction, and the delete is now a
+        // single statement instead of one round-trip per card — a failure between
+        // the two used to lose the user's votes entirely (architecture doc §3.8).
+        await using var tx = await db.Database.BeginTransactionAsync();
+
+        await db.RetroVotes
+            .Where(v => cardIdGuids.Contains(v.RetroCardId) && v.UserId == CurrentUserId)
+            .ExecuteDeleteAsync();
+
+        if (votes.Count > 0)
+        {
+            db.RetroVotes.AddRange(votes);
+            await db.SaveChangesAsync();
+        }
+
+        await tx.CommitAsync();
+        live.Touch(Topics.Retro(session.Id));
 
         return Ok(new { saved = votes.Count });
     }
@@ -451,10 +449,16 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (session is null) return NotFound();
         if (!await IsMemberOrParticipant(teamId, id)) return Forbid();
 
-        var existing = (await sb.Db.From<MoodCheckin>()
-            .Filter("retro_session_id", Operator.Equals, id.ToString())
-            .Filter("user_id",          Operator.Equals, CurrentUserId.ToString())
-            .Get()).Models.FirstOrDefault();
+        // No range validation here, matching the pre-existing behaviour (unlike
+        // QuickRetroController.SubmitMood, which does validate) — an out-of-range
+        // value now hits the mood_checkins CHECK constraint restored in Phase 1
+        // and returns a 500 with a clear check_violation instead of silently
+        // corrupting the stored mood. Adding the same C# validation as
+        // QuickRetroController would be a reasonable follow-up but is a product
+        // behaviour change, not a mechanical Postgrest→EF conversion — out of
+        // scope here.
+        var existing = await db.MoodCheckins
+            .FirstOrDefaultAsync(m => m.RetroSessionId == id && m.UserId == CurrentUserId);
 
         if (existing is null)
         {
@@ -465,13 +469,16 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
                 EntryMood      = req.EntryMood,
                 ExitMood       = req.ExitMood,
             };
-            var inserted = (await sb.Db.From<MoodCheckin>().Insert(checkin)).Models.First();
-            return Ok(inserted);
+            db.MoodCheckins.Add(checkin);
+            await db.SaveChangesAsync();
+            live.Touch(Topics.Retro(id));
+            return Ok(checkin);
         }
 
         if (req.EntryMood.HasValue) existing.EntryMood = req.EntryMood;
         if (req.ExitMood.HasValue)  existing.ExitMood  = req.ExitMood;
-        await sb.Db.From<MoodCheckin>().Update(existing);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(id));
         return Ok(existing);
     }
 
@@ -497,20 +504,22 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
                 return BadRequest($"Question must be {MaxIcebreakerLength} characters or fewer.");
 
             session.IcebreakerQuestion = custom;
-            await sb.Db.From<RetroSession>().Update(session);
+            await db.SaveChangesAsync();
+            live.Touch(Topics.Retro(session.Id));
             return Ok(new { question = custom, category = "custom" });
         }
 
-        var all = (await sb.Db.From<Icebreaker>().Get()).Models;
-        if (!all.Any()) return BadRequest("No icebreakers available.");
+        var all = await db.Icebreakers.AsNoTracking().ToListAsync();
+        if (all.Count == 0) return BadRequest("No icebreakers available.");
 
         // Pick a different question if possible
         var others = all.Where(i => i.Text != session.IcebreakerQuestion).ToList();
-        var pool   = others.Any() ? others : all;
+        var pool   = others.Count > 0 ? others : all;
         var pick   = pool[Random.Shared.Next(pool.Count)];
 
         session.IcebreakerQuestion = pick.Text;
-        await sb.Db.From<RetroSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(new { question = pick.Text, category = pick.Category });
     }
 
@@ -545,7 +554,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
                 : null; // End of queue
         }
 
-        await sb.Db.From<RetroSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(session);
     }
 
@@ -562,7 +572,8 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
         session.ActiveDiscussionCardId = req.CardId;
-        await sb.Db.From<RetroSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
         return Ok(session);
     }
 
@@ -585,12 +596,10 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
         Guid? retroCardId = null;
         if (req.RetroCardId.HasValue)
         {
-            var card = (await sb.Db.From<RetroCard>()
-                .Filter("id",               Operator.Equals, req.RetroCardId.Value.ToString())
-                .Filter("retro_session_id", Operator.Equals, session.Id.ToString())
-                .Get()).Models.FirstOrDefault();
-            if (card is null) return BadRequest("Card does not belong to this retro session.");
-            retroCardId = card.Id;
+            var cardExists = await db.RetroCards.AsNoTracking()
+                .AnyAsync(c => c.Id == req.RetroCardId.Value && c.RetroSessionId == session.Id);
+            if (!cardExists) return BadRequest("Card does not belong to this retro session.");
+            retroCardId = req.RetroCardId;
         }
 
         var item = new ActionItem
@@ -600,13 +609,17 @@ public class RetroController(SupabaseService sb, RetroParticipantService partici
             Type           = ActionItemType.Retro,
             AssigneeId     = req.AssigneeId,
             Text           = req.Text.Trim(),
-            DueDate        = req.DueDate,
+            // Request DTO carries DateTime? (a plain date picker payload); the model's
+            // DueDate is DateOnly? (architecture doc §3.5) — narrow at this one call site.
+            DueDate        = req.DueDate.HasValue ? DateOnly.FromDateTime(req.DueDate.Value) : null,
             Status         = ActionItemStatus.Open,
             RetroCardId    = retroCardId,
         };
 
-        var inserted = (await sb.Db.From<ActionItem>().Insert(item)).Models.First();
-        return Ok(inserted);
+        db.ActionItems.Add(item);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(session.Id));
+        return Ok(item);
     }
 }
 

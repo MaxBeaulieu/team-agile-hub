@@ -1,28 +1,22 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class WorkloadController(SupabaseService sb) : ControllerBase
+public class WorkloadController(AppDbContext db) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? User.FindFirstValue("sub")!);
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
     // GET api/teams/{teamId}/workload
     [HttpGet("api/teams/{teamId:guid}/workload")]
@@ -31,40 +25,35 @@ public class WorkloadController(SupabaseService sb) : ControllerBase
         if (!await IsMember(teamId)) return Forbid();
 
         // Team + members
-        var teamResult = (await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var teamResult = await db.Teams.AsNoTracking()
+            .Include(t => t.Members)
+            .FirstOrDefaultAsync(t => t.Id == teamId);
 
         if (teamResult is null) return NotFound();
 
         var members = teamResult.Members;
 
         // Active sprint
-        var activeSprint = (await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("status", Operator.Equals, "active")
-            .Order("start_date", Ordering.Descending)
-            .Get()).Models.FirstOrDefault();
+        var activeSprint = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId && s.Status == SprintStatus.Active)
+            .OrderByDescending(s => s.StartDate)
+            .FirstOrDefaultAsync();
 
         // All non-resolved blockers for the team
-        var allBlockers = (await sb.Db.From<Blocker>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("created_at", Ordering.Descending)
-            .Get()).Models
-            .Where(b => b.Status != BlockerStatus.Resolved)
-            .ToList();
+        var allBlockers = await db.Blockers.AsNoTracking()
+            .Where(b => b.TeamId == teamId && b.Status != BlockerStatus.Resolved)
+            .OrderByDescending(b => b.CreatedAt)
+            .ToListAsync();
 
         // Open/in-progress action items in the active sprint
         var activeActionItems = new List<ActionItem>();
         if (activeSprint is not null)
         {
-            activeActionItems = (await sb.Db.From<ActionItem>()
-                .Filter("sprint_id", Operator.Equals, activeSprint.Id.ToString())
-                .Order("created_at", Ordering.Descending)
-                .Get()).Models
-                .Where(a => a.Status == ActionItemStatus.Open || a.Status == ActionItemStatus.InProgress)
-                .ToList();
+            activeActionItems = await db.ActionItems.AsNoTracking()
+                .Where(a => a.SprintId == activeSprint.Id
+                    && (a.Status == ActionItemStatus.Open || a.Status == ActionItemStatus.InProgress))
+                .OrderByDescending(a => a.CreatedAt)
+                .ToListAsync();
         }
 
         // Per-member summaries

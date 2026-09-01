@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, Spade } from 'lucide-react'
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import { api } from '@/lib/api'
 import { createClient } from '@/lib/supabase/client'
+import { useLiveTopic } from '@/lib/live'
 import { toast } from 'sonner'
 import { TicketSidebar } from './ticket-sidebar'
 import { VotingArea } from './voting-area'
@@ -90,8 +91,6 @@ function PokerPageInner() {
   const [selectedDeck, setSelectedDeck]   = useState<PokerDeckType>('Fibonacci')
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   // Redirect to list if no params
   useEffect(() => {
     if (!sprintId || !teamId) router.replace('/dashboard/poker/list')
@@ -123,25 +122,10 @@ function PokerPageInner() {
 
   useEffect(() => { load() }, [load])
 
-  // Realtime subscription
-  useEffect(() => {
-    if (!sprintId) return
-    const supabase = createClient()
-
-    function debouncedRefresh() {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-      debounceRef.current = setTimeout(load, 300)
-    }
-
-    const channel = supabase
-      .channel(`poker:${sprintId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'poker_sessions' },  debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'poker_tickets' },   debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'poker_votes' },     debouncedRefresh)
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [sprintId, load])
+  // Realtime — one Invalidate covers sessions/tickets/votes; this used to have no
+  // filter at all (every team's poker activity woke every other team's page), which
+  // group-scoped invalidation fixes as a side effect (architecture doc §2 ADR-4).
+  useLiveTopic(sprintId ? `poker:${sprintId}` : null, load)
 
   async function createSession() {
     if (!sprintId || !teamId) return

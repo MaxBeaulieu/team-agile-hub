@@ -1,0 +1,53 @@
+# Reverse proxy for the self-hosted stack — SELFHOST_MIGRATION_PLAN.md Phase 6.
+#
+# Routes:
+#   /hub/*   → backend   (SignalR hub, mapped at exactly /hub/live in the
+#                          backend per docs/architecture/selfhost-migration.md
+#                          §2.1 — the whole /hub/* prefix is reserved for it)
+#   /api/*   → backend   (every backend controller route is under /api,
+#                          verified against all 14 controllers — see the
+#                          route-prefix confirmation in the deploy report)
+#   /*       → frontend  (Next.js, everything else — must stay last/catch-all)
+#
+# TLS: automatic. If DOMAIN is a real public hostname, Caddy obtains and
+# renews a Let's Encrypt cert for it (this is also what makes the Entra
+# redirect URI https://<DOMAIN>/api/auth/entra/callback valid — see the
+# plan's Phase 0/2 notes on tying Entra testing to this, and §1.9 on why
+# HTTPS is mandatory, not optional, for the Entra flow specifically). If
+# DOMAIN is left as `localhost` (the .env.example default), Caddy
+# automatically falls back to an internally-issued self-signed cert instead
+# — no config change needed either way.
+#
+# WebSocket upgrade for the SignalR hub is handled automatically by
+# `reverse_proxy` — it forwards the `Connection: Upgrade` handshake with no
+# extra config. Do NOT hand-add `header_up Connection Upgrade` or similar;
+# that actively breaks Caddy's own upgrade handling. Single backend replica
+# means no sticky-session / SignalR `negotiate` concerns — see
+# docs/architecture/selfhost-migration.md §2.4 and the single-replica note
+# in docker-compose.yml.
+#
+# If global request timeouts are ever added to this file, they MUST exempt
+# /hub/*. `reverse_proxy` has no read timeout by default, which is what a
+# long-lived WebSocket needs — a 30s/60s timeout applied globally would
+# silently kill idle hub connections and present as "realtime randomly stops
+# working" days later, not as a startup error.
+#
+# `flush_interval -1` on /hub/* is optional; only matters if SignalR's
+# long-polling fallback is ever exercised (not the case for a normal
+# WebSocket-capable browser). Harmless to add, not required.
+
+{$DOMAIN:localhost} {
+	encode gzip zstd
+
+	handle /hub/* {
+		reverse_proxy backend:8080
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

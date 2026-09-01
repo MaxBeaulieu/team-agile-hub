@@ -1,13 +1,14 @@
+using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class TeamsController(SupabaseService sb, AuthorizationService auth)
+public class TeamsController(AppDbContext db, AuthorizationService auth)
     : ApiControllerBase(auth)
 {
     // GET api/teams
@@ -16,31 +17,29 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
     {
         var userId = CurrentUserId;
 
-        var memberships = await sb.Db.From<TeamMember>()
-            .Filter("user_id", Operator.Equals, userId.ToString())
-            .Get();
+        var teamIds = await db.TeamMembers.AsNoTracking()
+            .Where(m => m.UserId == userId)
+            .Select(m => m.TeamId)
+            .ToListAsync();
 
-        var teamIds = memberships.Models.Select(m => m.TeamId.ToString()).ToList();
-        if (!teamIds.Any()) return Ok(new List<Team>());
+        if (teamIds.Count == 0) return Ok(new List<Team>());
 
-        var teams = await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.In, teamIds)
-            .Get();
+        var teams = await db.Teams.AsNoTracking()
+            .Include(t => t.Members)
+            .Where(t => teamIds.Contains(t.Id))
+            .ToListAsync();
 
-        return Ok(teams.Models);
+        return Ok(teams);
     }
 
     // GET api/teams/{id}
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetTeam(Guid id)
     {
-        var result = await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get();
+        var team = await db.Teams.AsNoTracking()
+            .Include(t => t.Members)
+            .FirstOrDefaultAsync(t => t.Id == id);
 
-        var team = result.Models.FirstOrDefault();
         if (team is null) return NotFound();
 
         if (!team.Members.Any(m => m.UserId == CurrentUserId))
@@ -59,32 +58,30 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
             SprintTerm = req.SprintTerm ?? "Sprint",
             CreatedBy  = CurrentUserId,
         };
-
-        var inserted = await sb.Db.From<Team>().Insert(team);
-        var created  = inserted.Models.First();
+        db.Teams.Add(team);
 
         var member = new TeamMember
         {
-            TeamId      = created.Id,
+            TeamId      = team.Id,
             UserId      = CurrentUserId,
             DisplayName = req.DisplayName ?? "Team Lead",
             Role        = TeamRole.Admin,
         };
+        db.TeamMembers.Add(member);
 
-        await sb.Db.From<TeamMember>().Insert(member);
+        // Single SaveChangesAsync — both inserts land in the same transaction (an
+        // improvement over the original's two separate round-trips, which could leave a
+        // team with no members if the process died between them).
+        await db.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetTeam), new { id = created.Id }, created);
+        return CreatedAtAction(nameof(GetTeam), new { id = team.Id }, team);
     }
 
-    // POST api/teams/{id}/invite � returns a time-limited invite token
+    // POST api/teams/{id}/invite — returns a time-limited invite token
     [HttpPost("{id:guid}/invite")]
     public async Task<IActionResult> GenerateInvite(Guid id)
     {
-        var teamResult = await sb.Db.From<Team>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get();
-
-        if (!teamResult.Models.Any()) return NotFound();
+        if (!await db.Teams.AsNoTracking().AnyAsync(t => t.Id == id)) return NotFound();
 
         if (!await IsTeamAdminAsync(id)) return Forbid();
 
@@ -108,18 +105,12 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
         if (!DateTime.TryParse(parts[1], out var expiry) || expiry < DateTime.UtcNow)
             return BadRequest("Invite token has expired");
 
-        var teamResult = await sb.Db.From<Team>()
-            .Filter("id", Operator.Equals, teamId.ToString())
-            .Get();
+        if (!await db.Teams.AsNoTracking().AnyAsync(t => t.Id == teamId)) return NotFound();
 
-        if (!teamResult.Models.Any()) return NotFound();
+        var alreadyMember = await db.TeamMembers.AsNoTracking()
+            .AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
-        var existing = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-
-        if (existing.Models.Any())
+        if (alreadyMember)
             return Ok(new { message = "Already a member", teamId });
 
         var member = new TeamMember
@@ -130,7 +121,8 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
             Role        = TeamRole.Member,
         };
 
-        await sb.Db.From<TeamMember>().Insert(member);
+        db.TeamMembers.Add(member);
+        await db.SaveChangesAsync();
         return Ok(new { message = "Joined successfully", teamId });
     }
 
@@ -138,20 +130,15 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
     [HttpPatch("{id:guid}")]
     public async Task<IActionResult> UpdateTeam(Guid id, [FromBody] UpdateTeamRequest req)
     {
-        var result = await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get();
-
-        var team = result.Models.FirstOrDefault();
+        var team = await db.Teams.Include(t => t.Members).FirstOrDefaultAsync(t => t.Id == id);
         if (team is null) return NotFound();
 
         if (!await IsTeamAdminAsync(id)) return Forbid();
 
-        if (req.Name      is not null) team.Name      = req.Name;
+        if (req.Name       is not null) team.Name       = req.Name;
         if (req.SprintTerm is not null) team.SprintTerm = req.SprintTerm;
 
-        await sb.Db.From<Team>().Update(team);
+        await db.SaveChangesAsync();
         return Ok(team);
     }
 
@@ -161,16 +148,11 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamAdminAsync(id)) return Forbid();
 
-        var team = (await sb.Db.From<Team>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
-
-        if (team is null) return NotFound();
-
-        // members, sprints and everything below them go with it (ON DELETE CASCADE)
-        await sb.Db.From<Team>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Delete();
+        // members, sprints and everything below them go with it (ON DELETE CASCADE) —
+        // ExecuteDeleteAsync issues a plain SQL DELETE, so the DB-level cascade still
+        // fires exactly as it would for any other delete of this row.
+        var deleted = await db.Teams.Where(t => t.Id == id).ExecuteDeleteAsync();
+        if (deleted == 0) return NotFound();
 
         return NoContent();
     }
@@ -191,8 +173,14 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
         if (req.Role == TeamRole.Member && IsLastAdmin(members, userId))
             return BadRequest("A team must keep at least one admin. Promote someone else first.");
 
+        // Bulk update rather than mutate-then-SaveChangesAsync — `target` came from
+        // AuthorizationService.GetTeamMembersAsync, a separate query against the same
+        // scoped AppDbContext, and this sidesteps relying on EF's identity resolution
+        // to hand back that exact tracked instance. Same pattern as
+        // RetroInviteController.GetInvite.
         target.Role = req.Role;
-        await sb.Db.From<TeamMember>().Update(target);
+        await db.TeamMembers.Where(m => m.Id == target.Id)
+            .ExecuteUpdateAsync(m => m.SetProperty(x => x.Role, req.Role));
         return Ok(target);
     }
 
@@ -212,9 +200,7 @@ public class TeamsController(SupabaseService sb, AuthorizationService auth)
                 ? "You are the last admin of this team. Promote someone else before leaving."
                 : "A team must keep at least one admin. Promote someone else first.");
 
-        await sb.Db.From<TeamMember>()
-            .Filter("id", Operator.Equals, target.Id.ToString())
-            .Delete();
+        await db.TeamMembers.Where(m => m.Id == target.Id).ExecuteDeleteAsync();
 
         return NoContent();
     }

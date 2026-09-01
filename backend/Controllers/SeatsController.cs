@@ -1,14 +1,15 @@
+using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class SeatsController(SupabaseService sb, AuthorizationService auth)
+public class SeatsController(AppDbContext db, AuthorizationService auth)
     : ApiControllerBase(auth)
 {
     private const int MaxNoteLength = 500;
@@ -40,9 +41,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
     [HttpGet]
     public async Task<IActionResult> GetSeats()
     {
-        var seats = (await sb.Db.From<Seat>()
-            .Order("seat_number", Ordering.Ascending)
-            .Get()).Models;
+        var seats = await db.Seats.AsNoTracking().OrderBy(s => s.SeatNumber).ToListAsync();
 
         var teams = await ResolveOccupantTeams(seats);
         var defectCounts = await OpenDefectCountsBySeat();
@@ -61,19 +60,20 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         if (wanted is not (null or "" or "open" or "closed"))
             return BadRequest("Status must be 'open' or 'closed'.");
 
-        var query = sb.Db.From<SeatDefectReport>()
-            .Order("created_at", Ordering.Descending);
+        IQueryable<SeatDefectReport> query = db.SeatDefectReports.AsNoTracking();
 
-        if (!string.IsNullOrEmpty(wanted))
-            query = query.Filter("status", Operator.Equals, wanted);
+        if (!string.IsNullOrEmpty(wanted) && Enum.TryParse<SeatDefectStatus>(wanted, true, out var statusFilter))
+        {
+            query = query.Where(r => r.Status == statusFilter);
+        }
 
-        var reports = (await query.Get()).Models;
+        var reports = await query.OrderByDescending(r => r.CreatedAt).ToListAsync();
         if (reports.Count == 0) return Ok(Array.Empty<SeatDefectReportDto>());
 
-        var seatIds = reports.Select(r => r.SeatId.ToString()).Distinct().ToList();
-        var seats = (await sb.Db.From<Seat>()
-            .Filter("id", Operator.In, seatIds)
-            .Get()).Models.ToDictionary(s => s.Id);
+        var seatIds = reports.Select(r => r.SeatId).Distinct().ToList();
+        var seats = await db.Seats.AsNoTracking()
+            .Where(s => seatIds.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id);
 
         return Ok(reports.Select(r => ToDto(r, seats.GetValueOrDefault(r.SeatId))));
     }
@@ -97,14 +97,10 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         if (!mine)
         {
             // one seat per person — give up whatever they were sitting at
-            var current = (await sb.Db.From<Seat>()
-                .Filter("occupant_id", Operator.Equals, CurrentUserId.ToString())
-                .Get()).Models;
-
+            var current = await db.Seats.Where(s => s.OccupantId == CurrentUserId).ToListAsync();
             foreach (var previous in current)
             {
                 Vacate(previous);
-                await sb.Db.From<Seat>().Update(previous);
             }
 
             seat.OccupantId = CurrentUserId;
@@ -115,7 +111,9 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         seat.Assignment = req.Assignment;
         seat.UpdatedAt = DateTime.UtcNow;
 
-        await sb.Db.From<Seat>().Update(seat);
+        // One SaveChangesAsync commits the new seat and any vacated previous seat(s)
+        // together — an improvement over updating each row in a separate round-trip.
+        await db.SaveChangesAsync();
         return Ok(ToDto(seat, CurrentUserId));
     }
 
@@ -129,7 +127,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         if (seat.OccupantId != CurrentUserId && !await IsPlatformAdminAsync()) return Forbid();
 
         Vacate(seat);
-        await sb.Db.From<Seat>().Update(seat);
+        await db.SaveChangesAsync();
         return Ok(ToDto(seat, CurrentUserId));
     }
 
@@ -144,7 +142,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         if (seat.OccupantId is null) return Conflict("This seat is already available.");
 
         Vacate(seat);
-        await sb.Db.From<Seat>().Update(seat);
+        await db.SaveChangesAsync();
         return Ok(ToDto(seat, CurrentUserId));
     }
 
@@ -164,7 +162,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         seat.Note = string.IsNullOrEmpty(note) ? null : note;
         seat.UpdatedAt = DateTime.UtcNow;
 
-        await sb.Db.From<Seat>().Update(seat);
+        await db.SaveChangesAsync();
         return Ok(ToDto(seat, CurrentUserId));
     }
 
@@ -188,7 +186,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         seat.HasTerminal = req.HasTerminal ?? seat.HasTerminal;
         seat.UpdatedAt = DateTime.UtcNow;
 
-        await sb.Db.From<Seat>().Update(seat);
+        await db.SaveChangesAsync();
         return Ok(ToDto(seat, CurrentUserId));
     }
 
@@ -215,8 +213,9 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
             Status = SeatDefectStatus.Open,
         };
 
-        var inserted = (await sb.Db.From<SeatDefectReport>().Insert(report)).Models.First();
-        return Ok(ToDto(inserted, seat));
+        db.SeatDefectReports.Add(report);
+        await db.SaveChangesAsync();
+        return Ok(ToDto(report, seat));
     }
 
     // POST api/seats/reports/{reportId}/close
@@ -226,9 +225,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsPlatformAdminAsync()) return Forbid();
 
-        var report = (await sb.Db.From<SeatDefectReport>()
-            .Filter("id", Operator.Equals, reportId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var report = await db.SeatDefectReports.FirstOrDefaultAsync(r => r.Id == reportId);
 
         if (report is null) return NotFound();
         if (report.Status == SeatDefectStatus.Closed) return Conflict("This report is already closed.");
@@ -242,7 +239,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
         report.ClosedBy = CurrentUserId;
         report.ClosedAt = DateTime.UtcNow;
 
-        await sb.Db.From<SeatDefectReport>().Update(report);
+        await db.SaveChangesAsync();
 
         var seat = await FindSeat(report.SeatId);
         return Ok(ToDto(report, seat));
@@ -250,10 +247,7 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<Seat?> FindSeat(Guid id) =>
-        (await sb.Db.From<Seat>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+    private Task<Seat?> FindSeat(Guid id) => db.Seats.FirstOrDefaultAsync(s => s.Id == id);
 
     private static void Vacate(Seat seat)
     {
@@ -276,23 +270,23 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
     {
         var occupantIds = seats
             .Where(s => s.OccupantId is not null)
-            .Select(s => s.OccupantId!.Value.ToString())
+            .Select(s => s.OccupantId!.Value)
             .Distinct()
             .ToList();
 
         if (occupantIds.Count == 0) return new();
 
-        var memberships = (await sb.Db.From<TeamMember>()
-            .Filter("user_id", Operator.In, occupantIds)
-            .Order("joined_at", Ordering.Ascending)
-            .Get()).Models;
+        var memberships = await db.TeamMembers.AsNoTracking()
+            .Where(m => occupantIds.Contains(m.UserId))
+            .OrderBy(m => m.JoinedAt)
+            .ToListAsync();
 
         if (memberships.Count == 0) return new();
 
-        var teamIds = memberships.Select(m => m.TeamId.ToString()).Distinct().ToList();
-        var teamNames = (await sb.Db.From<Team>()
-            .Filter("id", Operator.In, teamIds)
-            .Get()).Models.ToDictionary(t => t.Id, t => t.Name);
+        var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+        var teamNames = await db.Teams.AsNoTracking()
+            .Where(t => teamIds.Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, t => t.Name);
 
         return memberships
             .GroupBy(m => m.UserId)
@@ -305,14 +299,12 @@ public class SeatsController(SupabaseService sb, AuthorizationService auth)
                 });
     }
 
-    private async Task<Dictionary<Guid, int>> OpenDefectCountsBySeat()
-    {
-        var open = (await sb.Db.From<SeatDefectReport>()
-            .Filter("status", Operator.Equals, "open")
-            .Get()).Models;
-
-        return open.GroupBy(r => r.SeatId).ToDictionary(g => g.Key, g => g.Count());
-    }
+    private async Task<Dictionary<Guid, int>> OpenDefectCountsBySeat() =>
+        await db.SeatDefectReports.AsNoTracking()
+            .Where(r => r.Status == SeatDefectStatus.Open)
+            .GroupBy(r => r.SeatId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
 
     private static SeatDto ToDto(
         Seat seat,

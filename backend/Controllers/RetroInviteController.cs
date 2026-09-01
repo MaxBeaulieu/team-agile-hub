@@ -1,8 +1,10 @@
+using Backend.Data;
 using Backend.Models;
+using Backend.Realtime;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 
 namespace Backend.Controllers;
@@ -15,7 +17,8 @@ namespace Backend.Controllers;
 /// </summary>
 [ApiController]
 [Authorize]
-public class RetroInviteController(SupabaseService sb, RetroParticipantService participants) : ControllerBase
+public class RetroInviteController(AppDbContext db, RetroParticipantService participants, ILiveNotifier live)
+    : ControllerBase
 {
     private Guid CurrentUserId => RetroParticipantService.UserIdOf(User);
 
@@ -30,10 +33,8 @@ public class RetroInviteController(SupabaseService sb, RetroParticipantService p
         return new string(bytes.Select(b => CodeAlphabet[b % CodeAlphabet.Length]).ToArray());
     }
 
-    private async Task<RetroSession?> GetSessionByCode(string code) =>
-        (await sb.Db.From<RetroSession>()
-            .Filter("invite_code", Operator.Equals, code)
-            .Get()).Models.FirstOrDefault();
+    private Task<RetroSession?> GetSessionByCode(string code) =>
+        db.RetroSessions.FirstOrDefaultAsync(s => s.InviteCode == code);
 
     // ─── Invite link (host only) ───────────────────────────────────────────────
 
@@ -49,8 +50,15 @@ public class RetroInviteController(SupabaseService sb, RetroParticipantService p
 
         if (string.IsNullOrEmpty(session.InviteCode))
         {
-            session.InviteCode = GenerateInviteCode();
-            await sb.Db.From<RetroSession>().Update(session);
+            // A bulk update, not a mutate-then-SaveChangesAsync — `session` came from
+            // RetroParticipantService.GetSessionAsync, a separate query against the same
+            // scoped AppDbContext. EF's identity resolution means it may or may not be
+            // the exact tracked instance `db` would hand back for this row; the bulk
+            // update sidesteps the question entirely rather than relying on it.
+            var generatedCode = GenerateInviteCode();
+            await db.RetroSessions
+                .Where(s => s.Id == sessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.InviteCode, generatedCode));
 
             // Two concurrent first-time calls generate different codes and the
             // last write wins, so trust the stored value over the local copy.
@@ -94,6 +102,7 @@ public class RetroInviteController(SupabaseService sb, RetroParticipantService p
 
         var participant = await participants.EnsureParticipantAsync(session, User, displayName);
         var target = await BuildJoinTarget(session);
+        live.Touch(Topics.Retro(session.Id));
 
         return Ok(new
         {
@@ -133,16 +142,16 @@ public class RetroInviteController(SupabaseService sb, RetroParticipantService p
         if (session is null) return NotFound("Retro session not found.");
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
-        var participant = (await sb.Db.From<RetroParticipant>()
-            .Filter("id", Operator.Equals, participantId.ToString())
-            .Filter("retro_session_id", Operator.Equals, sessionId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var participant = await db.RetroParticipants
+            .FirstOrDefaultAsync(p => p.Id == participantId && p.RetroSessionId == sessionId);
         if (participant is null) return NotFound("Participant not found.");
 
         if (participant.UserId == session.FacilitatorId)
             return BadRequest("The host can't be removed from the session.");
 
-        await sb.Db.From<RetroParticipant>().Delete(participant);
+        db.RetroParticipants.Remove(participant);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Retro(sessionId));
 
         return NoContent();
     }

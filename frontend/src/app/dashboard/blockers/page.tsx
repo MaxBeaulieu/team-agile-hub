@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useState, useTransition } from 'react'
 import { AlertTriangle, ExternalLink, Plus, Trash2, Pencil } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
-import { createClient } from '@/lib/supabase/client'
+import { useLiveTopic } from '@/lib/live'
 import { toast } from 'sonner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -398,8 +398,6 @@ export default function BlockersPage() {
   const [editTarget,     setEditTarget]     = useState<Blocker | null>(null)
   const [deleteTarget,   setDeleteTarget]   = useState<Blocker | null>(null)
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   // ── Load teams once ──────────────────────────────────────────────────────
   useEffect(() => {
     api.get<Team[]>('/api/teams')
@@ -437,30 +435,19 @@ export default function BlockersPage() {
   }, [selectedTeamId, loadData])
 
   // ── Realtime ──────────────────────────────────────────────────────────────
-  useEffect(() => {
+  // Silent refresh — no loading spinner, unlike loadData. useLiveTopic debounces
+  // internally now (see lib/live.ts), so this fires directly on Invalidate.
+  const silentRefresh = useCallback(async () => {
     if (!selectedTeamId) return
-    const supabase = createClient()
-    const channel = supabase
-      .channel(`blockers:${selectedTeamId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'blockers', filter: `team_id=eq.${selectedTeamId}` },
-        () => {
-          if (debounceRef.current) clearTimeout(debounceRef.current)
-          // Silent refresh — don't show loading spinner for realtime updates
-          debounceRef.current = setTimeout(async () => {
-            const result = await Promise.allSettled([
-              api.get<Sprint[]>(`/api/teams/${selectedTeamId}/sprints`),
-              api.get<Blocker[]>(`/api/teams/${selectedTeamId}/blockers`),
-            ])
-            if (result[0].status === 'fulfilled') setSprints(result[0].value)
-            if (result[1].status === 'fulfilled') setBlockers(result[1].value)
-          }, 300)
-        },
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [selectedTeamId, loadData])
+    const result = await Promise.allSettled([
+      api.get<Sprint[]>(`/api/teams/${selectedTeamId}/sprints`),
+      api.get<Blocker[]>(`/api/teams/${selectedTeamId}/blockers`),
+    ])
+    if (result[0].status === 'fulfilled') setSprints(result[0].value)
+    if (result[1].status === 'fulfilled') setBlockers(result[1].value)
+  }, [selectedTeamId])
+
+  useLiveTopic(selectedTeamId ? `blockers:${selectedTeamId}` : null, silentRefresh)
 
   // ── Actions ───────────────────────────────────────────────────────────────
   function handleStatusChange(blocker: Blocker, status: BlockerStatus) {

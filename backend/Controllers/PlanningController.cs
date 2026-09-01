@@ -1,29 +1,22 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json.Linq;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class PlanningController(SupabaseService sb) : ControllerBase
+public class PlanningController(AppDbContext db) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? User.FindFirstValue("sub")!);
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
     // ─── Planning Aggregate ──────────────────────────────────────────────────
 
@@ -34,73 +27,65 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (!await IsMember(teamId)) return Forbid();
 
         // Sprint with nested planning data
-        var sprintResult = await sb.Db.From<Sprint>()
-            .Select("*, sprint_members(*), sprint_trainings(*), focus_topics(*), action_items(*)")
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("id", Operator.Equals, sprintId.ToString())
-            .Get();
+        var sprint = await db.Sprints.AsNoTracking()
+            .Include(s => s.SprintMembers)
+            .Include(s => s.Trainings)
+            .Include(s => s.FocusTopics)
+            .Include(s => s.ActionItems)
+            .FirstOrDefaultAsync(s => s.TeamId == teamId && s.Id == sprintId);
 
-        var sprint = sprintResult.Models.FirstOrDefault();
         if (sprint is null) return NotFound();
 
         // Load talking points + notes for each focus topic
         foreach (var topic in sprint.FocusTopics)
         {
-            var tpResult = await sb.Db.From<TalkingPoint>()
-                .Select("*, talking_point_notes(*), action_items(*)")
-                .Filter("focus_topic_id", Operator.Equals, topic.Id.ToString())
-                .Order("order", Ordering.Ascending)
-                .Get();
-            topic.TalkingPoints = tpResult.Models;
+            topic.TalkingPoints = await db.TalkingPoints.AsNoTracking()
+                .Include(tp => tp.Notes)
+                .Include(tp => tp.ActionItems)
+                .Where(tp => tp.FocusTopicId == topic.Id)
+                .OrderBy(tp => tp.Order)
+                .ToListAsync();
         }
 
         // Team with members
-        var teamResult = await sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, teamId.ToString())
-            .Get();
-        var teamMembers = teamResult.Models.FirstOrDefault()?.Members ?? new();
+        var team = await db.Teams.AsNoTracking().Include(t => t.Members).FirstOrDefaultAsync(t => t.Id == teamId);
+        var teamMembers = team?.Members ?? new();
 
         // Recurring agenda with talking points
-        var agendaResult = await sb.Db.From<RecurringAgendaItem>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get();
+        var recurringAgenda = await db.RecurringAgendaItems.AsNoTracking()
+            .Where(r => r.TeamId == teamId)
+            .ToListAsync();
 
-        foreach (var item in agendaResult.Models)
+        foreach (var item in recurringAgenda)
         {
-            var tpResult = await sb.Db.From<TalkingPoint>()
-                .Select("*, talking_point_notes(*), action_items(*)")
-                .Filter("agenda_item_id", Operator.Equals, item.Id.ToString())
-                .Order("order", Ordering.Ascending)
-                .Get();
-            item.TalkingPoints = tpResult.Models;
-}
+            item.TalkingPoints = await db.TalkingPoints.AsNoTracking()
+                .Include(tp => tp.Notes)
+                .Include(tp => tp.ActionItems)
+                .Where(tp => tp.AgendaItemId == item.Id)
+                .OrderBy(tp => tp.Order)
+                .ToListAsync();
+        }
 
         // Previous sprint's open/in-progress action items for carry-over
-        var prevSprintResult = await sb.Db.From<Sprint>()
-            .Select("id")
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("start_date", Operator.LessThan, sprint.StartDate.ToString("o"))
-            .Order("start_date", Ordering.Descending)
-            .Limit(1)
-            .Get();
+        var prevSprint = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId && s.StartDate < sprint.StartDate)
+            .OrderByDescending(s => s.StartDate)
+            .FirstOrDefaultAsync();
 
         var carryOverItems = new List<ActionItem>();
-        var prevSprint = prevSprintResult.Models.FirstOrDefault();
         if (prevSprint is not null)
         {
-            var prevItems = await sb.Db.From<ActionItem>()
-                .Filter("sprint_id", Operator.Equals, prevSprint.Id.ToString())
-                .Filter("status", Operator.In, new List<string> { "open", "in_progress" })
-                .Get();
-            carryOverItems = prevItems.Models;
+            carryOverItems = await db.ActionItems.AsNoTracking()
+                .Where(a => a.SprintId == prevSprint.Id
+                    && (a.Status == ActionItemStatus.Open || a.Status == ActionItemStatus.InProgress))
+                .ToListAsync();
         }
 
         return Ok(new
         {
             Sprint = sprint,
             TeamMembers = teamMembers,
-            RecurringAgenda = agendaResult.Models,
+            RecurringAgenda = recurringAgenda,
             CarryOverItems = carryOverItems,
         });
     }
@@ -114,10 +99,10 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (!await IsMember(teamId)) return Forbid();
         if (string.IsNullOrWhiteSpace(req.Title)) return BadRequest("Title is required.");
 
-        var existing = await sb.Db.From<FocusTopic>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get();
-        var order = existing.Models.Any() ? existing.Models.Max(f => f.Order) + 1 : 0;
+        var maxOrder = await db.FocusTopics.AsNoTracking()
+            .Where(f => f.SprintId == sprintId)
+            .Select(f => (int?)f.Order)
+            .MaxAsync();
 
         var topic = new FocusTopic
         {
@@ -125,11 +110,12 @@ public class PlanningController(SupabaseService sb) : ControllerBase
             Title    = req.Title,
             Content  = req.Content,
             Status   = req.Status ?? FocusTopicStatus.OnTrack,
-            Order    = order,
+            Order    = (maxOrder ?? -1) + 1,
         };
 
-        var inserted = (await sb.Db.From<FocusTopic>().Insert(topic)).Models.First();
-        return Ok(inserted);
+        db.FocusTopics.Add(topic);
+        await db.SaveChangesAsync();
+        return Ok(topic);
     }
 
     // PATCH api/teams/{teamId}/focus-topics/{id}
@@ -138,23 +124,19 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<FocusTopic>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.FocusTopics.FirstOrDefaultAsync(f => f.Id == id);
         if (existing is null) return NotFound();
 
         // Verify the topic's sprint belongs to this team
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id", Operator.Equals, existing.SprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
-        if (sprint is null) return Forbid();
+        var belongsToTeam = await db.Sprints.AsNoTracking()
+            .AnyAsync(s => s.Id == existing.SprintId && s.TeamId == teamId);
+        if (!belongsToTeam) return Forbid();
 
         if (req.Title  is not null)  existing.Title   = req.Title;
         if (req.Content is not null) existing.Content = req.Content;
         if (req.Status.HasValue)     existing.Status  = req.Status.Value;
 
-        await sb.Db.From<FocusTopic>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 
@@ -164,18 +146,15 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<FocusTopic>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.FocusTopics.FirstOrDefaultAsync(f => f.Id == id);
         if (existing is null) return NotFound();
 
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("id", Operator.Equals, existing.SprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
-        if (sprint is null) return Forbid();
+        var belongsToTeam = await db.Sprints.AsNoTracking()
+            .AnyAsync(s => s.Id == existing.SprintId && s.TeamId == teamId);
+        if (!belongsToTeam) return Forbid();
 
-        await sb.Db.From<FocusTopic>().Filter("id", Operator.Equals, id.ToString()).Delete();
+        db.FocusTopics.Remove(existing);
+        await db.SaveChangesAsync();
         return NoContent();
     }
 
@@ -186,10 +165,8 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     public async Task<IActionResult> GetRecurringAgenda(Guid teamId)
     {
         if (!await IsMember(teamId)) return Forbid();
-        var result = await sb.Db.From<RecurringAgendaItem>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get();
-        return Ok(result.Models);
+        var items = await db.RecurringAgendaItems.AsNoTracking().Where(r => r.TeamId == teamId).ToListAsync();
+        return Ok(items);
     }
 
     // POST api/teams/{teamId}/recurring-agenda
@@ -200,8 +177,9 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Title)) return BadRequest("Title is required.");
 
         var item = new RecurringAgendaItem { TeamId = teamId, Title = req.Title };
-        var inserted = (await sb.Db.From<RecurringAgendaItem>().Insert(item)).Models.First();
-        return Ok(inserted);
+        db.RecurringAgendaItems.Add(item);
+        await db.SaveChangesAsync();
+        return Ok(item);
     }
 
     // PATCH api/teams/{teamId}/recurring-agenda/{id}
@@ -210,16 +188,13 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<RecurringAgendaItem>()
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.RecurringAgendaItems.FirstOrDefaultAsync(r => r.Id == id && r.TeamId == teamId);
         if (existing is null) return NotFound();
 
         if (req.Title      is not null) existing.Title      = req.Title;
         if (req.LastStatus is not null) existing.LastStatus = req.LastStatus;
 
-        await sb.Db.From<RecurringAgendaItem>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 
@@ -229,19 +204,13 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<RecurringAgendaItem>()
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.RecurringAgendaItems.FirstOrDefaultAsync(r => r.Id == id && r.TeamId == teamId);
         if (existing is null) return NotFound();
 
-        await sb.Db.From<RecurringAgendaItem>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Delete();
+        db.RecurringAgendaItems.Remove(existing);
+        await db.SaveChangesAsync();
         return NoContent();
     }
-
-    // ─── Action Items ─────────────────────────────────────────────────────────
 
     // ─── Talking Points ──────────────────────────────────────────────────────
 
@@ -253,13 +222,15 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (!await IsMember(teamId)) return Forbid();
         if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest("Text is required.");
 
-        var existing = (await sb.Db.From<TalkingPoint>()
-            .Filter("focus_topic_id", Operator.Equals, topicId.ToString()).Get()).Models;
-        var order = existing.Any() ? existing.Max(tp => tp.Order) + 1 : 0;
+        var maxOrder = await db.TalkingPoints.AsNoTracking()
+            .Where(tp => tp.FocusTopicId == topicId)
+            .Select(tp => (int?)tp.Order)
+            .MaxAsync();
 
-        var point = new TalkingPoint { FocusTopicId = topicId, Text = req.Text.Trim(), Order = order };
-        var inserted = (await sb.Db.From<TalkingPoint>().Insert(point)).Models.First();
-        return Ok(inserted);
+        var point = new TalkingPoint { FocusTopicId = topicId, Text = req.Text.Trim(), Order = (maxOrder ?? -1) + 1 };
+        db.TalkingPoints.Add(point);
+        await db.SaveChangesAsync();
+        return Ok(point);
     }
 
     // POST api/teams/{teamId}/agenda/{itemId}/talking-points
@@ -270,13 +241,15 @@ public class PlanningController(SupabaseService sb) : ControllerBase
         if (!await IsMember(teamId)) return Forbid();
         if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest("Text is required.");
 
-        var existing = (await sb.Db.From<TalkingPoint>()
-            .Filter("agenda_item_id", Operator.Equals, itemId.ToString()).Get()).Models;
-        var order = existing.Any() ? existing.Max(tp => tp.Order) + 1 : 0;
+        var maxOrder = await db.TalkingPoints.AsNoTracking()
+            .Where(tp => tp.AgendaItemId == itemId)
+            .Select(tp => (int?)tp.Order)
+            .MaxAsync();
 
-        var point = new TalkingPoint { AgendaItemId = itemId, Text = req.Text.Trim(), Order = order };
-        var inserted = (await sb.Db.From<TalkingPoint>().Insert(point)).Models.First();
-        return Ok(inserted);
+        var point = new TalkingPoint { AgendaItemId = itemId, Text = req.Text.Trim(), Order = (maxOrder ?? -1) + 1 };
+        db.TalkingPoints.Add(point);
+        await db.SaveChangesAsync();
+        return Ok(point);
     }
 
     // PATCH api/teams/{teamId}/talking-points/{id}
@@ -286,12 +259,11 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var point = (await sb.Db.From<TalkingPoint>()
-            .Filter("id", Operator.Equals, id.ToString()).Get()).Models.FirstOrDefault();
+        var point = await db.TalkingPoints.FirstOrDefaultAsync(tp => tp.Id == id);
         if (point is null) return NotFound();
 
         if (req.Text is not null) point.Text = req.Text.Trim();
-        await sb.Db.From<TalkingPoint>().Update(point);
+        await db.SaveChangesAsync();
         return Ok(point);
     }
 
@@ -301,7 +273,7 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        await sb.Db.From<TalkingPoint>().Filter("id", Operator.Equals, id.ToString()).Delete();
+        await db.TalkingPoints.Where(tp => tp.Id == id).ExecuteDeleteAsync();
         return NoContent();
     }
 
@@ -322,8 +294,9 @@ public class PlanningController(SupabaseService sb) : ControllerBase
             Content        = req.Content.Trim(),
         };
 
-        var inserted = (await sb.Db.From<TalkingPointNote>().Insert(note)).Models.First();
-        return Ok(inserted);
+        db.TalkingPointNotes.Add(note);
+        await db.SaveChangesAsync();
+        return Ok(note);
     }
 
     // DELETE api/teams/{teamId}/notes/{id}
@@ -332,13 +305,13 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var note = (await sb.Db.From<TalkingPointNote>()
-            .Filter("id", Operator.Equals, id.ToString()).Get()).Models.FirstOrDefault();
+        var note = await db.TalkingPointNotes.FirstOrDefaultAsync(n => n.Id == id);
         if (note is null) return NotFound();
         // Only author can delete their own note
         if (note.AuthorId != CurrentUserId) return Forbid();
 
-        await sb.Db.From<TalkingPointNote>().Filter("id", Operator.Equals, id.ToString()).Delete();
+        db.TalkingPointNotes.Remove(note);
+        await db.SaveChangesAsync();
         return NoContent();
     }
 
@@ -353,42 +326,33 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var allSprints = (await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("start_date", Ordering.Descending)
-            .Get()).Models;
+        var allSprints = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId)
+            .OrderByDescending(s => s.StartDate)
+            .ToListAsync();
 
-        if (!allSprints.Any())
+        if (allSprints.Count == 0)
             return Ok(new { items = Array.Empty<ActionItem>(), sprints = allSprints });
 
-        List<ActionItem> items;
+        IQueryable<ActionItem> q;
         if (sprintId.HasValue)
         {
-            var q = sb.Db.From<ActionItem>()
-                .Filter("sprint_id", Operator.Equals, sprintId.Value.ToString())
-                .Order("created_at", Ordering.Descending);
-            if (!string.IsNullOrWhiteSpace(status))
-                q = q.Filter("status", Operator.Equals, status);
-            if (!string.IsNullOrWhiteSpace(type))
-                q = q.Filter("type", Operator.Equals, type);
-            if (assigneeId.HasValue)
-                q = q.Filter("assignee_id", Operator.Equals, assigneeId.Value.ToString());
-            items = (await q.Get()).Models;
+            q = db.ActionItems.AsNoTracking().Where(a => a.SprintId == sprintId.Value);
         }
         else
         {
-            var sprintIds = allSprints.Select(s => s.Id.ToString()).ToList();
-            var q = sb.Db.From<ActionItem>()
-                .Filter("sprint_id", Operator.In, sprintIds)
-                .Order("created_at", Ordering.Descending);
-            if (!string.IsNullOrWhiteSpace(status))
-                q = q.Filter("status", Operator.Equals, status);
-            if (!string.IsNullOrWhiteSpace(type))
-                q = q.Filter("type", Operator.Equals, type);
-            if (assigneeId.HasValue)
-                q = q.Filter("assignee_id", Operator.Equals, assigneeId.Value.ToString());
-            items = (await q.Get()).Models;
+            var teamSprintIds = allSprints.Select(s => (Guid?)s.Id).ToList();
+            q = db.ActionItems.AsNoTracking().Where(a => teamSprintIds.Contains(a.SprintId));
         }
+
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<ActionItemStatus>(status, true, out var statusFilter))
+            q = q.Where(a => a.Status == statusFilter);
+        if (!string.IsNullOrWhiteSpace(type) && Enum.TryParse<ActionItemType>(type, true, out var typeFilter))
+            q = q.Where(a => a.Type == typeFilter);
+        if (assigneeId.HasValue)
+            q = q.Where(a => a.AssigneeId == assigneeId.Value);
+
+        var items = await q.OrderByDescending(a => a.CreatedAt).ToListAsync();
 
         return Ok(new { items, sprints = allSprints });
     }
@@ -409,8 +373,9 @@ public class PlanningController(SupabaseService sb) : ControllerBase
             TalkingPointId  = req.TalkingPointId,
         };
 
-        var inserted = (await sb.Db.From<ActionItem>().Insert(item)).Models.First();
-        return Ok(inserted);
+        db.ActionItems.Add(item);
+        await db.SaveChangesAsync();
+        return Ok(item);
     }
 
     // PATCH api/teams/{teamId}/action-items/{id}
@@ -419,16 +384,14 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<ActionItem>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.ActionItems.FirstOrDefaultAsync(a => a.Id == id);
         if (existing is null) return NotFound();
 
         if (req.Text   is not null)  existing.Text       = req.Text;
         if (req.Status.HasValue)     existing.Status     = req.Status.Value;
         if (req.AssigneeId.HasValue) existing.AssigneeId = req.AssigneeId;
 
-        await sb.Db.From<ActionItem>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 
@@ -439,14 +402,11 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var source = (await sb.Db.From<ActionItem>()
-            .Filter("id", Operator.Equals, sourceId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var source = await db.ActionItems.FirstOrDefaultAsync(a => a.Id == sourceId);
         if (source is null) return NotFound();
 
         // Mark source as carried over
         source.Status = ActionItemStatus.CarriedOver;
-        await sb.Db.From<ActionItem>().Update(source);
 
         // Create new item in target sprint
         var carried = new ActionItem
@@ -458,9 +418,12 @@ public class PlanningController(SupabaseService sb) : ControllerBase
             DueDate       = source.DueDate,
             CarriedFromId = source.Id,
         };
+        db.ActionItems.Add(carried);
 
-        var inserted = (await sb.Db.From<ActionItem>().Insert(carried)).Models.First();
-        return Ok(inserted);
+        // One SaveChangesAsync — the source's status change and the new carried
+        // item commit together instead of as two separate round-trips.
+        await db.SaveChangesAsync();
+        return Ok(carried);
     }
 
     // POST api/teams/{teamId}/action-items/{id}/drop
@@ -469,13 +432,11 @@ public class PlanningController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<ActionItem>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.ActionItems.FirstOrDefaultAsync(a => a.Id == id);
         if (existing is null) return NotFound();
 
         existing.Status = ActionItemStatus.Dropped;
-        await sb.Db.From<ActionItem>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 }

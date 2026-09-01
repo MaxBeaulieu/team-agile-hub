@@ -7,6 +7,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import { useLiveTopic } from "@/lib/live";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -343,84 +344,9 @@ function RetroInner({ retroId }: { retroId: string }) {
     load();
   }, [load]);
 
-  useEffect(() => {
-    if (!data?.session.id) return;
-
-    const sessionId = data.session.id;
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(load, 300);
-    };
-
-    const channel = supabase
-      .channel(`quickretro:${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_sessions",
-          filter: `id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_cards",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_votes",
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mood_checkins",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "action_items",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_participants",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .subscribe();
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
-    };
-  }, [data?.session.id, load, supabase]);
+  // Quick retros and sprint retros are the same retro_sessions row and share one
+  // topic family — "retro:{id}", not "quickretro:{id}" (architecture doc §2.1).
+  useLiveTopic(data?.session.id ? `retro:${data.session.id}` : null, load);
 
   // Roster = everyone who joined this retro *and* currently has it open.
   // Hooks must run before the early returns below.

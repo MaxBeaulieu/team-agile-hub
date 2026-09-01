@@ -1,14 +1,15 @@
+using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json.Linq;
-using static Postgrest.Constants;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Route("api/teams/{teamId:guid}/sprints")]
-public class SprintsController(SupabaseService sb, AuthorizationService auth)
+public class SprintsController(AppDbContext db, AuthorizationService auth)
     : ApiControllerBase(auth)
 {
     // GET api/teams/{teamId}/sprints
@@ -17,13 +18,14 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
-        var result = await sb.Db.From<Sprint>()
-            .Select("*, sprint_members(*), sprint_trainings(*)")
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("start_date", Ordering.Descending)
-            .Get();
+        var sprints = await db.Sprints.AsNoTracking()
+            .Include(s => s.SprintMembers)
+            .Include(s => s.Trainings)
+            .Where(s => s.TeamId == teamId)
+            .OrderByDescending(s => s.StartDate)
+            .ToListAsync();
 
-        return Ok(result.Models);
+        return Ok(sprints);
     }
 
     // GET api/teams/{teamId}/sprints/{id}
@@ -32,13 +34,14 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
-        var result = await sb.Db.From<Sprint>()
-            .Select("*, sprint_members(*), sprint_trainings(*), focus_topics(*), action_items(*), blockers(*)")
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Get();
+        var sprint = await db.Sprints.AsNoTracking()
+            .Include(s => s.SprintMembers)
+            .Include(s => s.Trainings)
+            .Include(s => s.FocusTopics)
+            .Include(s => s.ActionItems)
+            .Include(s => s.Blockers)
+            .FirstOrDefaultAsync(s => s.TeamId == teamId && s.Id == id);
 
-        var sprint = result.Models.FirstOrDefault();
         if (sprint is null) return NotFound();
         return Ok(sprint);
     }
@@ -51,44 +54,47 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
         if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
         // Get the previous sprint goal for reference
-        var prev = await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("start_date", Ordering.Descending)
-            .Limit(1)
-            .Get();
+        var prevGoal = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId)
+            .OrderByDescending(s => s.StartDate)
+            .Select(s => s.Goal)
+            .FirstOrDefaultAsync();
 
         var sprint = new Sprint
         {
             TeamId       = teamId,
             Name         = req.Name,
             Goal         = req.Goal,
-            PreviousGoal = prev.Models.FirstOrDefault()?.Goal,
+            PreviousGoal = prevGoal,
             ChampionId   = req.ChampionId,
             StartDate    = req.StartDate,
             EndDate      = req.EndDate,
         };
-
-        var created = (await sb.Db.From<Sprint>().Insert(sprint)).Models.First();
+        db.Sprints.Add(sprint);
 
         // Seed focus topics from recurring agenda items
-        var recurring = await sb.Db.From<RecurringAgendaItem>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get();
+        var recurring = await db.RecurringAgendaItems.AsNoTracking()
+            .Where(r => r.TeamId == teamId)
+            .ToListAsync();
 
-        if (recurring.Models.Any())
+        if (recurring.Count > 0)
         {
-            var topics = recurring.Models.Select((item, i) => new FocusTopic
+            var topics = recurring.Select((item, i) => new FocusTopic
             {
-                SprintId = created.Id,
+                SprintId = sprint.Id,
                 Title    = item.Title,
                 Status   = FocusTopicStatus.OnTrack,
                 Order    = i,
             }).ToList();
 
-            await sb.Db.From<FocusTopic>().Insert(topics);
+            db.FocusTopics.AddRange(topics);
         }
 
-        return CreatedAtAction(nameof(GetSprint), new { teamId, id = created.Id }, created);
+        // One SaveChangesAsync — the sprint and its seeded focus topics commit together
+        // instead of as two separate round-trips.
+        await db.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetSprint), new { teamId, id = sprint.Id }, sprint);
     }
 
     // PATCH api/teams/{teamId}/sprints/{id}
@@ -97,12 +103,7 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
-        var result = await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Get();
-
-        var sprint = result.Models.FirstOrDefault();
+        var sprint = await db.Sprints.FirstOrDefaultAsync(s => s.TeamId == teamId && s.Id == id);
         if (sprint is null) return NotFound();
 
         if (body.TryGetValue("name", StringComparison.OrdinalIgnoreCase, out var nameToken)
@@ -119,7 +120,7 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
             && Enum.TryParse<SprintStatus>(statusToken.Value<string>(), ignoreCase: true, out var status))
             sprint.Status = status;
 
-        await sb.Db.From<Sprint>().Update(sprint);
+        await db.SaveChangesAsync();
         return Ok(sprint);
     }
 
@@ -129,18 +130,11 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamAdminAsync(teamId)) return Forbid();
 
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("id",      Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
-
-        if (sprint is null) return NotFound();
-
         // Everything hanging off the sprint (members, trainings, focus topics, retros,
-        // poker sessions, action items) is removed by the ON DELETE CASCADE chain.
-        await sb.Db.From<Sprint>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Delete();
+        // poker sessions, action items) is removed by the ON DELETE CASCADE chain —
+        // ExecuteDeleteAsync issues a plain SQL DELETE, so it still fires.
+        var deleted = await db.Sprints.Where(s => s.TeamId == teamId && s.Id == id).ExecuteDeleteAsync();
+        if (deleted == 0) return NotFound();
 
         return NoContent();
     }
@@ -152,21 +146,22 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<SprintMember>()
-            .Filter("sprint_id", Operator.Equals, id.ToString())
-            .Filter("user_id",   Operator.Equals, userId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.SprintMembers.FirstOrDefaultAsync(m => m.SprintId == id && m.UserId == userId);
 
         if (existing is null)
         {
-            var m = new SprintMember { SprintId = id, UserId = userId, DaysOff = req.DaysOff, CapacityScore = req.CapacityScore };
-            var inserted = (await sb.Db.From<SprintMember>().Insert(m)).Models.First();
-            return Ok(inserted);
+            var m = new SprintMember
+            {
+                SprintId = id, UserId = userId, DaysOff = req.DaysOff, CapacityScore = req.CapacityScore,
+            };
+            db.SprintMembers.Add(m);
+            await db.SaveChangesAsync();
+            return Ok(m);
         }
 
         existing.DaysOff       = req.DaysOff;
         existing.CapacityScore = req.CapacityScore;
-        await sb.Db.From<SprintMember>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 
@@ -177,20 +172,18 @@ public class SprintsController(SupabaseService sb, AuthorizationService auth)
     {
         if (!await IsTeamMemberAsync(teamId)) return Forbid();
 
-        var existing = (await sb.Db.From<SprintTraining>()
-            .Filter("sprint_id", Operator.Equals, id.ToString())
-            .Filter("user_id",   Operator.Equals, userId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.SprintTrainings.FirstOrDefaultAsync(t => t.SprintId == id && t.UserId == userId);
 
         if (existing is null)
         {
             var t = new SprintTraining { SprintId = id, UserId = userId, Description = req.Description };
-            var inserted = (await sb.Db.From<SprintTraining>().Insert(t)).Models.First();
-            return Ok(inserted);
+            db.SprintTrainings.Add(t);
+            await db.SaveChangesAsync();
+            return Ok(t);
         }
 
         existing.Description = req.Description;
-        await sb.Db.From<SprintTraining>().Update(existing);
+        await db.SaveChangesAsync();
         return Ok(existing);
     }
 }

@@ -1,7 +1,5 @@
-using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using Postgrest.Attributes;
-using Postgrest.Models;
+using Newtonsoft.Json;
 using System.Runtime.Serialization;
 
 namespace Backend.Models;
@@ -13,27 +11,19 @@ public enum TeamRole
     [EnumMember(Value = "admin")]  Admin,
 }
 
-[Table("team_members")]
-public class TeamMember : BaseModel
+public class TeamMember
 {
-    [PrimaryKey("id", false)]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Column("team_id")]
     public Guid TeamId { get; set; }
 
-    [Column("user_id")]
     public Guid UserId { get; set; }
 
-    [Column("display_name")]
     public string DisplayName { get; set; } = string.Empty;
 
-    [Column("avatar_url")]
     public string? AvatarUrl { get; set; }
 
-    [Column("role")]
     public TeamRole Role { get; set; } = TeamRole.Member;
 
-    [Column("joined_at")]
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }

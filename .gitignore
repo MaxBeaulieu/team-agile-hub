@@ -32,3 +32,10 @@ backend/obj/
 
 # Fly.io
 .fly/
+.claude/settings.json
+.claude/agents/architect.md
+.claude/agents/deploy-manager.md
+.claude/agents/designer.md
+.claude/agents/developer.md
+.claude/agents/product-manager.md
+.claude/agents/qa.md

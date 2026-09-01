@@ -1,5 +1,3 @@
-using Postgrest.Attributes;
-using Postgrest.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System.Runtime.Serialization;
@@ -22,83 +20,63 @@ public enum PokerSessionStatus
     [EnumMember(Value = "Completed")]  Completed,
 }
 
-[Table("poker_sessions")]
-public class PokerSession : BaseModel
+public class PokerSession
 {
-    [PrimaryKey("id", false)]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Column("sprint_id")]
     public Guid SprintId { get; set; }
 
-    [Column("deck_type")]
     public PokerDeckType DeckType { get; set; } = PokerDeckType.Fibonacci;
 
-    [Column("custom_deck_json")]
     public string? CustomDeckJson { get; set; }
 
-    [Column("facilitator_id")]
     public Guid? FacilitatorId { get; set; }
 
-    [Column("status")]
     public PokerSessionStatus Status { get; set; } = PokerSessionStatus.Pending;
 
-    [Column("current_ticket_id")]
     public Guid? CurrentTicketId { get; set; }
 
-    [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    [Reference(typeof(PokerTicket), useInnerJoin: false)]
+    // No [JsonProperty] override — unlike the other collection navigations, this one
+    // was never tagged and already serialises as camelCase "tickets" (confirmed against
+    // frontend/src/app/dashboard/poker/ticket-sidebar.tsx). Do not add one.
     public List<PokerTicket> Tickets { get; set; } = [];
 }
 
-[Table("poker_tickets")]
-public class PokerTicket : BaseModel
+public class PokerTicket
 {
-    [PrimaryKey("id", false)]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Column("poker_session_id")]
     public Guid PokerSessionId { get; set; }
 
-    [Column("jira_issue_id")]
     public string? JiraIssueId { get; set; }
 
-    [Column("title")]
     public string Title { get; set; } = string.Empty;
 
-    [Column("description")]
     public string? Description { get; set; }
 
-    [Column("final_points")]
     public int? FinalPoints { get; set; }
 
-    [Column("votes_revealed")]
     public bool VotesRevealed { get; set; } = false;
 
-    [Column("order")]
     public int Order { get; set; }
 
-    [Reference(typeof(PokerVote), useInnerJoin: false)]
+    // No [JsonProperty] override — see the note on PokerSession.Tickets above; this
+    // serialises as camelCase "votes" (confirmed against
+    // frontend/src/app/dashboard/poker/voting-area.tsx).
     public List<PokerVote> Votes { get; set; } = [];
 }
 
-[Table("poker_votes")]
-public class PokerVote : BaseModel
+public class PokerVote
 {
-    [PrimaryKey("id", false)]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Column("poker_ticket_id")]
     public Guid PokerTicketId { get; set; }
 
-    [Column("user_id")]
     public Guid UserId { get; set; }
 
-    [Column("estimate")]
     public string Estimate { get; set; } = string.Empty;
 
-    [Column("revealed_at")]
     public DateTime? RevealedAt { get; set; }
 }

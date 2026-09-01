@@ -1,28 +1,22 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class HealthController(SupabaseService sb) : ControllerBase
+public class HealthController(AppDbContext db) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? User.FindFirstValue("sub")!);
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
     // GET /api/teams/{teamId}/sprints/{sprintId}/health
     [HttpGet("api/teams/{teamId:guid}/sprints/{sprintId:guid}/health")]
@@ -30,75 +24,58 @@ public class HealthController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        // ── Batch 1: sprint + team ────────────────────────────────────────────
-        var sprintTask = sb.Db.From<Sprint>()
-            .Select("*, sprint_members(*)")
-            .Filter("id",      Operator.Equals, sprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get();
-        var teamTask = sb.Db.From<Team>()
-            .Select("*, team_members(*)")
-            .Filter("id", Operator.Equals, teamId.ToString())
-            .Get();
-        await Task.WhenAll((Task)sprintTask, (Task)teamTask);
-
-        var sprint = (await sprintTask).Models.FirstOrDefault();
+        // The original Task.WhenAll batching doesn't carry over: a single
+        // AppDbContext instance isn't thread-safe and can't run concurrent
+        // queries the way separate Postgrest HTTP requests could. Sequential
+        // instead — each query here is small on its own.
+        var sprint = await db.Sprints.AsNoTracking()
+            .Include(s => s.SprintMembers)
+            .FirstOrDefaultAsync(s => s.Id == sprintId && s.TeamId == teamId);
         if (sprint is null) return NotFound();
-        var teamMembers = (await teamTask).Models.FirstOrDefault()?.Members ?? [];
 
-        // ── Batch 2: action items, blockers, retro sessions, recent sprints ───
-        var actionsTask    = sb.Db.From<ActionItem>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get();
-        var blockersTask   = sb.Db.From<Blocker>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get();
-        var retrosTask     = sb.Db.From<RetroSession>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get();
-        var allSprintsTask = sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Order("start_date", Ordering.Descending)
-            .Limit(8)
-            .Get();
-        await Task.WhenAll((Task)actionsTask, (Task)blockersTask, (Task)retrosTask, (Task)allSprintsTask);
+        var team = await db.Teams.AsNoTracking().Include(t => t.Members).FirstOrDefaultAsync(t => t.Id == teamId);
+        var teamMembers = team?.Members ?? [];
 
-        var actions    = (await actionsTask).Models;
-        var blockers   = (await blockersTask).Models;
-        var retros     = (await retrosTask).Models;
-        var allSprints = (await allSprintsTask).Models;
+        var actions = await db.ActionItems.AsNoTracking().Where(a => a.SprintId == sprintId).ToListAsync();
+        var blockers = await db.Blockers.AsNoTracking().Where(b => b.SprintId == sprintId).ToListAsync();
+        var retros = await db.RetroSessions.AsNoTracking().Where(r => r.SprintId == sprintId).ToListAsync();
+        var allSprints = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId)
+            .OrderByDescending(s => s.StartDate)
+            .Take(8)
+            .ToListAsync();
 
         // ── Mood checkins (separate query keyed to retro session IDs) ─────────
         List<MoodCheckin> allCheckins = [];
         if (retros.Count > 0)
         {
-            var retroIds = retros.Select(r => r.Id.ToString()).ToList();
-            allCheckins = (await sb.Db.From<MoodCheckin>()
-                .Filter("retro_session_id", Operator.In, retroIds)
-                .Get()).Models;
+            var retroIds = retros.Select(r => r.Id).ToList();
+            allCheckins = await db.MoodCheckins.AsNoTracking()
+                .Where(m => retroIds.Contains(m.RetroSessionId))
+                .ToListAsync();
         }
 
-        // ── Batch 3: poker sessions for all recent team sprints ───────────────
-        var allSprintIds = allSprints.Select(s => s.Id.ToString()).ToList();
+        // ── Poker sessions for all recent team sprints ─────────────────────────
+        var allSprintIds = allSprints.Select(s => s.Id).ToList();
         List<PokerSession> allPokerSessions = [];
         if (allSprintIds.Count > 0)
         {
-            allPokerSessions = (await sb.Db.From<PokerSession>()
-                .Filter("sprint_id", Operator.In, allSprintIds)
-                .Get()).Models;
+            allPokerSessions = await db.PokerSessions.AsNoTracking()
+                .Where(p => allSprintIds.Contains(p.SprintId))
+                .ToListAsync();
         }
 
-        // ── Batch 4: tickets for all those sessions ───────────────────────────
-        var allSessionIds = allPokerSessions.Select(s => s.Id.ToString()).ToList();
+        // ── Tickets for all those sessions ──────────────────────────────────────
+        var allSessionIds = allPokerSessions.Select(s => s.Id).ToList();
         List<PokerTicket> allTickets = [];
         if (allSessionIds.Count > 0)
         {
-            allTickets = (await sb.Db.From<PokerTicket>()
-                .Filter("poker_session_id", Operator.In, allSessionIds)
-                .Get()).Models;
+            allTickets = await db.PokerTickets.AsNoTracking()
+                .Where(t => allSessionIds.Contains(t.PokerSessionId))
+                .ToListAsync();
         }
 
-        // ── Batch 5: votes for this sprint's tickets ──────────────────────────
+        // ── Votes for this sprint's tickets ─────────────────────────────────────
         var currentSession = allPokerSessions.FirstOrDefault(s => s.SprintId == sprintId);
         var currentTickets = currentSession is not null
             ? allTickets.Where(t => t.PokerSessionId == currentSession.Id).ToList()
@@ -106,10 +83,10 @@ public class HealthController(SupabaseService sb) : ControllerBase
         List<PokerVote> votes = [];
         if (currentTickets.Count > 0)
         {
-            var ticketIds = currentTickets.Select(t => t.Id.ToString()).ToList();
-            votes = (await sb.Db.From<PokerVote>()
-                .Filter("poker_ticket_id", Operator.In, ticketIds)
-                .Get()).Models;
+            var ticketIds = currentTickets.Select(t => t.Id).ToList();
+            votes = await db.PokerVotes.AsNoTracking()
+                .Where(v => ticketIds.Contains(v.PokerTicketId))
+                .ToListAsync();
         }
 
         // ── Compute: capacity ─────────────────────────────────────────────────

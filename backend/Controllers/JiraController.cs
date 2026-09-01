@@ -1,9 +1,10 @@
+using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
-using static Postgrest.Constants;
 using System.Security.Claims;
 using System.Text;
 
@@ -11,7 +12,7 @@ namespace Backend.Controllers;
 
 [ApiController]
 public class JiraController(
-    SupabaseService sb,
+    AppDbContext db,
     JiraEncryptionService enc,
     IHttpClientFactory httpFactory,
     IConfiguration config,
@@ -121,9 +122,7 @@ public class JiraController(
             ? string.Empty
             : enc.Encrypt(tokenJson.RefreshToken);
 
-        var existing = (await sb.Db.From<JiraIntegration>()
-            .Filter("team_id", Operator.Equals, teamId.Value.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.JiraIntegrations.FirstOrDefaultAsync(j => j.TeamId == teamId.Value);
 
         if (existing is not null)
         {
@@ -132,11 +131,10 @@ public class JiraController(
             existing.AccessTokenEncrypted   = encAccessToken;
             existing.RefreshTokenEncrypted  = encRefreshToken;
             existing.TokenExpiresAt         = expiresAt;
-            await sb.Db.From<JiraIntegration>().Update(existing);
         }
         else
         {
-            await sb.Db.From<JiraIntegration>().Insert(new JiraIntegration
+            db.JiraIntegrations.Add(new JiraIntegration
             {
                 TeamId                = teamId.Value,
                 CloudId               = resource.Id,
@@ -146,6 +144,8 @@ public class JiraController(
                 TokenExpiresAt        = expiresAt,
             });
         }
+
+        await db.SaveChangesAsync();
 
         return Redirect($"{frontendUrl}/dashboard/settings?teamId={teamId}&jira=connected");
     }
@@ -157,9 +157,7 @@ public class JiraController(
     public async Task<IActionResult> GetStatus(Guid teamId)
     {
         if (!await IsTeamMemberAsync(teamId)) return Forbid();
-        var record = (await sb.Db.From<JiraIntegration>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var record = await db.JiraIntegrations.AsNoTracking().FirstOrDefaultAsync(j => j.TeamId == teamId);
         return Ok(new { connected = record is not null, cloudName = record?.CloudName });
     }
 
@@ -287,9 +285,7 @@ public class JiraController(
     public async Task<IActionResult> Disconnect(Guid teamId)
     {
         if (!await IsTeamAdminAsync(teamId)) return Forbid();
-        await sb.Db.From<JiraIntegration>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Delete();
+        await db.JiraIntegrations.Where(j => j.TeamId == teamId).ExecuteDeleteAsync();
         return NoContent();
     }
 
@@ -297,13 +293,12 @@ public class JiraController(
 
     private async Task<(string accessToken, string cloudId)?> GetValidTokenAsync(Guid teamId)
     {
-        var record = (await sb.Db.From<JiraIntegration>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var record = await db.JiraIntegrations.FirstOrDefaultAsync(j => j.TeamId == teamId);
 
         if (record is null) return null;
 
-        // Treat stored time as UTC (Postgrest returns Unspecified kind for timestamptz)
+        // Npgsql maps timestamptz to Kind=Utc already, so this is now a no-op — left in
+        // place as a harmless belt-and-braces guard rather than relied upon.
         var expiresAtUtc = DateTime.SpecifyKind(record.TokenExpiresAt, DateTimeKind.Utc);
         if (expiresAtUtc <= DateTime.UtcNow)
         {
@@ -337,7 +332,7 @@ public class JiraController(
             if (!string.IsNullOrEmpty(tokenJson.RefreshToken))
                 record.RefreshTokenEncrypted = enc.Encrypt(tokenJson.RefreshToken);
             record.TokenExpiresAt = DateTime.UtcNow.AddSeconds(tokenJson.ExpiresIn - 60);
-            await sb.Db.From<JiraIntegration>().Update(record);
+            await db.SaveChangesAsync();
         }
 
         return (enc.Decrypt(record.AccessTokenEncrypted), record.CloudId);

@@ -1,88 +1,31 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useMemo } from 'react'
+import { usePresence, type PresenceEntry } from '@/lib/live'
 import type { RetroParticipantData, RosterMember } from './types'
 
-type PresencePayload = {
-  userId: string
-  displayName: string
-  isAnonymous: boolean
-  isHost: boolean
-}
-
 /**
- * Tracks who currently has this retro open, using a Supabase Realtime Presence
- * channel. Nothing is written to the database: entries disappear as soon as a
- * tab closes or the connection drops.
+ * The retro roster: everyone who has joined the retro *and* currently has it open.
+ * Presence entries come from LiveHub's server-derived `Presence(topic, entries)`
+ * broadcast (architecture doc §2.3) — the roster no longer asserts its own identity
+ * via `channel.track(payload)`; the server builds every entry from claims plus the
+ * caller's `retro_participants` row, so a client can no longer appear as host by
+ * lying about it.
  *
- * The presence key is the user id, so several tabs from the same person collapse
- * into a single roster entry.
- */
-export function useRetroPresence(sessionId: string | null, me: PresencePayload | null) {
-  const [presence, setPresence] = useState<PresencePayload[]>([])
-  const supabase = useMemo(() => createClient(), [])
-
-  const meUserId = me?.userId ?? null
-  const meDisplayName = me?.displayName ?? ''
-  const meIsAnonymous = me?.isAnonymous ?? false
-  const meIsHost = me?.isHost ?? false
-
-  useEffect(() => {
-    if (!sessionId || !meUserId) return
-
-    const payload: PresencePayload = {
-      userId: meUserId,
-      displayName: meDisplayName,
-      isAnonymous: meIsAnonymous,
-      isHost: meIsHost,
-    }
-
-    const channel = supabase.channel(`retro-presence:${sessionId}`, {
-      config: { presence: { key: meUserId } },
-    })
-
-    const sync = () => {
-      const state = channel.presenceState<PresencePayload>()
-      const seen = new Map<string, PresencePayload>()
-      for (const entries of Object.values(state)) {
-        for (const entry of entries) {
-          if (entry?.userId) seen.set(entry.userId, entry)
-        }
-      }
-      setPresence([...seen.values()])
-    }
-
-    channel
-      .on('presence', { event: 'sync' }, sync)
-      .on('presence', { event: 'join' }, sync)
-      .on('presence', { event: 'leave' }, sync)
-      .subscribe(status => {
-        if (status === 'SUBSCRIBED') channel.track(payload)
-      })
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [sessionId, meUserId, meDisplayName, meIsAnonymous, meIsHost, supabase])
-
-  return presence
-}
-
-/**
- * The retro roster: everyone who has joined the retro *and* currently has it
- * open. Presence payloads cover the window before a newcomer's participant row
- * reaches this client, and the local user is always included so the strip never
- * renders empty while the presence channel is still connecting.
+ * The local user is always included so the strip never renders empty while the hub
+ * connection is still joining the topic — same behaviour as the pre-migration
+ * Supabase presence channel.
  */
 export function useRetroRoster(
   sessionId: string | null,
   participants: RetroParticipantData[],
   currentUserId: string,
 ): RosterMember[] {
-  const mine = participants.find(p => p.userId === currentUserId) ?? null
+  const topic = sessionId ? `retro:${sessionId}` : null
+  const presence = usePresence(topic)
 
-  const me: PresencePayload | null = currentUserId
+  const mine = participants.find(p => p.userId === currentUserId) ?? null
+  const me: PresenceEntry | null = currentUserId
     ? {
         userId: currentUserId,
         displayName: mine?.displayName ?? 'You',
@@ -91,11 +34,9 @@ export function useRetroRoster(
       }
     : null
 
-  const presence = useRetroPresence(sessionId, me)
-
   return useMemo(() => {
     const byUserId = new Map(participants.map(p => [p.userId, p]))
-    const present = new Map<string, PresencePayload>(presence.map(p => [p.userId, p]))
+    const present = new Map<string, PresenceEntry>(presence.map(p => [p.userId, p]))
     if (me && !present.has(me.userId)) present.set(me.userId, me)
 
     const members: RosterMember[] = [...present.values()].map(entry => {

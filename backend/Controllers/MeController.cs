@@ -1,7 +1,8 @@
+using Backend.Data;
 using Backend.Models;
 using Backend.Services;
 using Microsoft.AspNetCore.Mvc;
-using static Postgrest.Constants;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Controllers;
 
@@ -12,7 +13,7 @@ namespace Backend.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/me")]
-public class MeController(SupabaseService sb, AuthorizationService auth)
+public class MeController(AppDbContext db, AuthorizationService auth)
     : ApiControllerBase(auth)
 {
     // GET api/me
@@ -24,10 +25,10 @@ public class MeController(SupabaseService sb, AuthorizationService auth)
         var teamNames = new Dictionary<Guid, string>();
         if (memberships.Count > 0)
         {
-            var teamIds = memberships.Select(m => m.TeamId.ToString()).Distinct().ToList();
-            teamNames = (await sb.Db.From<Team>()
-                .Filter("id", Operator.In, teamIds)
-                .Get()).Models.ToDictionary(t => t.Id, t => t.Name);
+            var teamIds = memberships.Select(m => m.TeamId).Distinct().ToList();
+            teamNames = await db.Teams.AsNoTracking()
+                .Where(t => teamIds.Contains(t.Id))
+                .ToDictionaryAsync(t => t.Id, t => t.Name);
         }
 
         var displayName = memberships
@@ -60,19 +61,12 @@ public class MeController(SupabaseService sb, AuthorizationService auth)
     /// </summary>
     private async Task<bool> HasRetroHistoryAsync()
     {
-        var userId = CurrentUserId.ToString();
+        if (await db.RetroParticipants.AsNoTracking().AnyAsync(p => p.UserId == CurrentUserId))
+        {
+            return true;
+        }
 
-        var joined = await sb.Db.From<RetroParticipant>()
-            .Filter("user_id", Operator.Equals, userId)
-            .Limit(1)
-            .Get();
-        if (joined.Models.Count > 0) return true;
-
-        var facilitated = await sb.Db.From<RetroSession>()
-            .Filter("facilitator_id", Operator.Equals, userId)
-            .Limit(1)
-            .Get();
-        return facilitated.Models.Count > 0;
+        return await db.RetroSessions.AsNoTracking().AnyAsync(s => s.FacilitatorId == CurrentUserId);
     }
 }
 

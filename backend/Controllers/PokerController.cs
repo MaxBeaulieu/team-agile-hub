@@ -1,54 +1,37 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
+using Backend.Realtime;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
-using static Postgrest.Constants;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
 
 [ApiController]
 [Authorize]
-public class PokerController(SupabaseService sb) : ControllerBase
+public class PokerController(AppDbContext db, ILiveNotifier live) : ControllerBase
 {
     private Guid CurrentUserId =>
         Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? User.FindFirstValue("sub")!);
 
-    private async Task<bool> IsMember(Guid teamId)
-    {
-        var r = await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Filter("user_id", Operator.Equals, CurrentUserId.ToString())
-            .Get();
-        return r.Models.Any();
-    }
+    private Task<bool> IsMember(Guid teamId) =>
+        db.TeamMembers.AsNoTracking().AnyAsync(m => m.TeamId == teamId && m.UserId == CurrentUserId);
 
-    private async Task<Sprint?> GetSprint(Guid teamId, Guid sprintId)
-    {
-        var r = await sb.Db.From<Sprint>()
-            .Filter("id",      Operator.Equals, sprintId.ToString())
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get();
-        return r.Models.FirstOrDefault();
-    }
+    private Task<Sprint?> GetSprint(Guid teamId, Guid sprintId) =>
+        db.Sprints.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sprintId && s.TeamId == teamId);
 
     private async Task<PokerSession?> GetSession(Guid teamId, Guid sessionId)
     {
-        var sprint = (await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.Select(s => s.Id.ToString()).ToList();
+        var session = await db.PokerSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
+        if (session is null) return null;
 
-        if (!sprint.Any()) return null;
+        var belongsToTeam = await db.Sprints.AsNoTracking()
+            .AnyAsync(s => s.Id == session.SprintId && s.TeamId == teamId);
 
-        var r = await sb.Db.From<PokerSession>()
-            .Filter("id", Operator.Equals, sessionId.ToString())
-            .Get();
-
-        var session = r.Models.FirstOrDefault();
-        if (session is null || !sprint.Contains(session.SprintId.ToString())) return null;
-        return session;
+        return belongsToTeam ? session : null;
     }
 
     // ─── Deck helpers ─────────────────────────────────────────────────────────
@@ -77,15 +60,16 @@ public class PokerController(SupabaseService sb) : ControllerBase
     {
         if (!await IsMember(teamId)) return Forbid();
 
-        var sprintIds = (await sb.Db.From<Sprint>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models.Select(s => s.Id.ToString()).ToList();
+        var sprintIds = await db.Sprints.AsNoTracking()
+            .Where(s => s.TeamId == teamId)
+            .Select(s => s.Id)
+            .ToListAsync();
 
-        if (!sprintIds.Any()) return Ok(new { sessions = Array.Empty<object>() });
+        if (sprintIds.Count == 0) return Ok(new { sessions = Array.Empty<object>() });
 
-        var sessions = (await sb.Db.From<PokerSession>()
-            .Filter("sprint_id", Operator.In, sprintIds)
-            .Get()).Models;
+        var sessions = await db.PokerSessions.AsNoTracking()
+            .Where(s => sprintIds.Contains(s.SprintId))
+            .ToListAsync();
 
         return Ok(new { sessions });
     }
@@ -102,9 +86,7 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (sprint is null) return NotFound("Sprint not found.");
 
         // Idempotent — return existing if already created
-        var existing = (await sb.Db.From<PokerSession>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.PokerSessions.AsNoTracking().FirstOrDefaultAsync(s => s.SprintId == sprintId);
         if (existing is not null) return Ok(existing);
 
         var session = new PokerSession
@@ -116,8 +98,10 @@ public class PokerController(SupabaseService sb) : ControllerBase
             Status        = PokerSessionStatus.Pending,
         };
 
-        var inserted = (await sb.Db.From<PokerSession>().Insert(session)).Models.First();
-        return Ok(inserted);
+        db.PokerSessions.Add(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(sprintId));
+        return Ok(session);
     }
 
     // ─── Get full session state ───────────────────────────────────────────────
@@ -130,43 +114,24 @@ public class PokerController(SupabaseService sb) : ControllerBase
         var sprint = await GetSprint(teamId, sprintId);
         if (sprint is null) return NotFound("Sprint not found.");
 
-        var session = (await sb.Db.From<PokerSession>()
-            .Filter("sprint_id", Operator.Equals, sprintId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var session = await db.PokerSessions.AsNoTracking().FirstOrDefaultAsync(s => s.SprintId == sprintId);
         if (session is null) return NotFound("No poker session for this sprint.");
 
-        // Load tickets ordered
-        var tickets = (await sb.Db.From<PokerTicket>()
-            .Filter("poker_session_id", Operator.Equals, session.Id.ToString())
-            .Order("order", Ordering.Ascending)
-            .Get()).Models;
-
-        // Load votes for all tickets
-        var ticketIds = tickets.Select(t => t.Id.ToString()).ToList();
-        List<PokerVote> votes = [];
-        if (ticketIds.Any())
-        {
-            votes = (await sb.Db.From<PokerVote>()
-                .Filter("poker_ticket_id", Operator.In, ticketIds)
-                .Get()).Models;
-        }
+        // Load tickets + their votes, ordered
+        var tickets = await db.PokerTickets.AsNoTracking()
+            .Include(t => t.Votes)
+            .Where(t => t.PokerSessionId == session.Id)
+            .OrderBy(t => t.Order)
+            .ToListAsync();
 
         // For each ticket, only expose own vote OR all votes if revealed
-        var visibleVotes = votes
-            .Where(v => v.RevealedAt.HasValue || v.UserId == CurrentUserId)
-            .ToList();
-
-        // Attach votes to tickets
-        var votesById = visibleVotes.GroupBy(v => v.PokerTicketId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
         foreach (var t in tickets)
-            t.Votes = votesById.TryGetValue(t.Id, out var tv) ? tv : [];
+        {
+            t.Votes = t.Votes.Where(v => v.RevealedAt.HasValue || v.UserId == CurrentUserId).ToList();
+        }
 
         // Load team members
-        var members = (await sb.Db.From<TeamMember>()
-            .Filter("team_id", Operator.Equals, teamId.ToString())
-            .Get()).Models;
+        var members = await db.TeamMembers.AsNoTracking().Where(m => m.TeamId == teamId).ToListAsync();
 
         return Ok(new
         {
@@ -194,9 +159,7 @@ public class PokerController(SupabaseService sb) : ControllerBase
             return BadRequest("Cannot add tickets to a completed session.");
 
         // Next order index
-        var count = (await sb.Db.From<PokerTicket>()
-            .Filter("poker_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.Count;
+        var count = await db.PokerTickets.AsNoTracking().CountAsync(t => t.PokerSessionId == id);
 
         var ticket = new PokerTicket
         {
@@ -206,18 +169,18 @@ public class PokerController(SupabaseService sb) : ControllerBase
             JiraIssueId    = req.JiraIssueId?.Trim(),
             Order          = count,
         };
-
-        var inserted = (await sb.Db.From<PokerTicket>().Insert(ticket)).Models.First();
+        db.PokerTickets.Add(ticket);
 
         // Auto-set as current ticket if first one and session is pending
         if (count == 0 && session.Status == PokerSessionStatus.Pending)
         {
-            session.CurrentTicketId = inserted.Id;
+            session.CurrentTicketId = ticket.Id;
             session.Status          = PokerSessionStatus.InProgress;
-            await sb.Db.From<PokerSession>().Update(session);
         }
 
-        return Ok(inserted);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
+        return Ok(ticket);
     }
 
     // ─── Delete ticket ────────────────────────────────────────────────────────
@@ -231,13 +194,12 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session is null) return NotFound();
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
-        var ticket = (await sb.Db.From<PokerTicket>()
-            .Filter("id",               Operator.Equals, ticketId.ToString())
-            .Filter("poker_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var ticket = await db.PokerTickets.FirstOrDefaultAsync(t => t.Id == ticketId && t.PokerSessionId == id);
         if (ticket is null) return NotFound();
 
-        await sb.Db.From<PokerTicket>().Delete(ticket);
+        db.PokerTickets.Remove(ticket);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
         return NoContent();
     }
 
@@ -254,17 +216,13 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session.Status != PokerSessionStatus.InProgress)
             return BadRequest("Session is not in progress.");
 
-        var ticket = (await sb.Db.From<PokerTicket>()
-            .Filter("id",               Operator.Equals, req.TicketId.ToString())
-            .Filter("poker_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var ticket = await db.PokerTickets.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == req.TicketId && t.PokerSessionId == id);
         if (ticket is null) return NotFound("Ticket not found.");
         if (ticket.VotesRevealed) return BadRequest("Votes are already revealed for this ticket.");
 
-        var existing = (await sb.Db.From<PokerVote>()
-            .Filter("poker_ticket_id", Operator.Equals, req.TicketId.ToString())
-            .Filter("user_id",         Operator.Equals, CurrentUserId.ToString())
-            .Get()).Models.FirstOrDefault();
+        var existing = await db.PokerVotes
+            .FirstOrDefaultAsync(v => v.PokerTicketId == req.TicketId && v.UserId == CurrentUserId);
 
         if (existing is null)
         {
@@ -274,12 +232,15 @@ public class PokerController(SupabaseService sb) : ControllerBase
                 UserId        = CurrentUserId,
                 Estimate      = req.Estimate,
             };
-            var inserted = (await sb.Db.From<PokerVote>().Insert(vote)).Models.First();
-            return Ok(inserted);
+            db.PokerVotes.Add(vote);
+            await db.SaveChangesAsync();
+            live.Touch(Topics.Poker(session.SprintId));
+            return Ok(vote);
         }
 
         existing.Estimate = req.Estimate;
-        await sb.Db.From<PokerVote>().Update(existing);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
         return Ok(existing);
     }
 
@@ -295,27 +256,20 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session is null) return NotFound();
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
-        var ticket = (await sb.Db.From<PokerTicket>()
-            .Filter("id",               Operator.Equals, req.TicketId.ToString())
-            .Filter("poker_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var ticket = await db.PokerTickets.FirstOrDefaultAsync(t => t.Id == req.TicketId && t.PokerSessionId == id);
         if (ticket is null) return NotFound("Ticket not found.");
 
         ticket.VotesRevealed = true;
-        await sb.Db.From<PokerTicket>().Update(ticket);
 
-        // Stamp revealed_at on all votes for this ticket
-        var votes = (await sb.Db.From<PokerVote>()
-            .Filter("poker_ticket_id", Operator.Equals, req.TicketId.ToString())
-            .Get()).Models;
-
+        // Bulk update instead of a fetch-then-per-row-update loop — one statement
+        // stamps revealed_at on every vote for this ticket.
         var now = DateTime.UtcNow;
-        foreach (var v in votes)
-        {
-            v.RevealedAt = now;
-            await sb.Db.From<PokerVote>().Update(v);
-        }
+        await db.PokerVotes
+            .Where(v => v.PokerTicketId == req.TicketId)
+            .ExecuteUpdateAsync(v => v.SetProperty(x => x.RevealedAt, now));
 
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
         return Ok(ticket);
     }
 
@@ -331,34 +285,26 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session is null) return NotFound();
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
-        var ticket = (await sb.Db.From<PokerTicket>()
-            .Filter("id",               Operator.Equals, ticketId.ToString())
-            .Filter("poker_session_id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var ticket = await db.PokerTickets.FirstOrDefaultAsync(t => t.Id == ticketId && t.PokerSessionId == id);
         if (ticket is null) return NotFound();
 
         if (req.FinalPoints.HasValue) ticket.FinalPoints = req.FinalPoints;
         if (req.Title is not null)    ticket.Title       = req.Title.Trim();
-        await sb.Db.From<PokerTicket>().Update(ticket);
 
         // Advance to next unestimated ticket if requested
         if (req.AdvanceToNext == true)
         {
-            var allTickets = (await sb.Db.From<PokerTicket>()
-                .Filter("poker_session_id", Operator.Equals, id.ToString())
-                .Order("order", Ordering.Ascending)
-                .Get()).Models;
-
-            var nextTicket = allTickets
-                .Where(t => t.Id != ticketId && t.FinalPoints is null)
+            var nextTicket = await db.PokerTickets.AsNoTracking()
+                .Where(t => t.PokerSessionId == id && t.Id != ticketId && t.FinalPoints == null)
                 .OrderBy(t => t.Order)
-                .FirstOrDefault();
+                .FirstOrDefaultAsync();
 
             session.CurrentTicketId = nextTicket?.Id;
             if (nextTicket is null) session.Status = PokerSessionStatus.Completed;
-            await sb.Db.From<PokerSession>().Update(session);
         }
 
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
         return Ok(ticket);
     }
 
@@ -373,7 +319,10 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session is null) return NotFound();
         if (session.FacilitatorId != CurrentUserId) return Forbid();
 
-        await sb.Db.From<PokerSession>().Delete(session);
+        var sprintId = session.SprintId;
+        db.PokerSessions.Remove(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(sprintId));
         return NoContent();
     }
 
@@ -393,7 +342,8 @@ public class PokerController(SupabaseService sb) : ControllerBase
         if (session.Status == PokerSessionStatus.Pending)
             session.Status = PokerSessionStatus.InProgress;
 
-        await sb.Db.From<PokerSession>().Update(session);
+        await db.SaveChangesAsync();
+        live.Touch(Topics.Poker(session.SprintId));
         return Ok(session);
     }
 }

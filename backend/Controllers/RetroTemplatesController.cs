@@ -1,9 +1,9 @@
+using Backend.Data;
 using Backend.Models;
-using Backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
-using static Postgrest.Constants;
 using System.Security.Claims;
 
 namespace Backend.Controllers;
@@ -16,7 +16,7 @@ namespace Backend.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/retro-templates")]
-public class RetroTemplatesController(SupabaseService sb) : ControllerBase
+public class RetroTemplatesController(AppDbContext db) : ControllerBase
 {
     private const int MaxColumns    = 8;
     private const int MaxNameLength = 60;
@@ -55,9 +55,9 @@ public class RetroTemplatesController(SupabaseService sb) : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var templates = (await sb.Db.From<RetroTemplate>()
-            .Order("created_at", Ordering.Ascending)
-            .Get()).Models;
+        var templates = await db.RetroTemplates.AsNoTracking()
+            .OrderBy(t => t.CreatedAt)
+            .ToListAsync();
 
         // Built-ins first, then the shared user-created ones.
         return Ok(templates
@@ -80,17 +80,16 @@ public class RetroTemplatesController(SupabaseService sb) : ControllerBase
             CreatedBy   = CurrentUserId,
         };
 
-        var created = (await sb.Db.From<RetroTemplate>().Insert(template)).Models.First();
-        return Ok(created);
+        db.RetroTemplates.Add(template);
+        await db.SaveChangesAsync();
+        return Ok(template);
     }
 
     // PATCH api/retro-templates/{id}
     [HttpPatch("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] SaveTemplateRequest req)
     {
-        var template = (await sb.Db.From<RetroTemplate>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var template = await db.RetroTemplates.FirstOrDefaultAsync(t => t.Id == id);
         if (template is null) return NotFound();
 
         if (template.IsBuiltin) return Forbid();
@@ -102,7 +101,7 @@ public class RetroTemplatesController(SupabaseService sb) : ControllerBase
         template.Name        = name!;
         template.ColumnsJson = columnsJson!;
 
-        await sb.Db.From<RetroTemplate>().Update(template);
+        await db.SaveChangesAsync();
         return Ok(template);
     }
 
@@ -110,17 +109,14 @@ public class RetroTemplatesController(SupabaseService sb) : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var template = (await sb.Db.From<RetroTemplate>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Get()).Models.FirstOrDefault();
+        var template = await db.RetroTemplates.FirstOrDefaultAsync(t => t.Id == id);
         if (template is null) return NotFound();
 
         if (template.IsBuiltin) return Forbid();
         if (template.CreatedBy != CurrentUserId) return Forbid();
 
-        await sb.Db.From<RetroTemplate>()
-            .Filter("id", Operator.Equals, id.ToString())
-            .Delete();
+        db.RetroTemplates.Remove(template);
+        await db.SaveChangesAsync();
 
         return NoContent();
     }

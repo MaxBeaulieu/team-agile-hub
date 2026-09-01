@@ -14,6 +14,7 @@ import { ArrowLeft, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import { useLiveTopic } from "@/lib/live";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -506,85 +507,10 @@ function RetroInner({
     load();
   }, [load]);
 
-  // Supabase Realtime subscriptions — refetch on any change
-  useEffect(() => {
-    if (!data?.session.id) return;
-
-    const sessionId = data.session.id;
-    // Debounce rapid batches (e.g. bulk vote saves)
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(load, 300);
-    };
-
-    const channel = supabase
-      .channel(`retro:${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_sessions",
-          filter: `id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_cards",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_votes",
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "mood_checkins",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "action_items",
-        },
-        scheduleRefresh,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "retro_participants",
-          filter: `retro_session_id=eq.${sessionId}`,
-        },
-        scheduleRefresh,
-      )
-      .subscribe();
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
-    };
-  }, [data?.session.id, load]);
+  // Realtime — one Invalidate covers every table this page used to subscribe to
+  // individually (session, cards, votes, mood checkins, action items, participants).
+  // The existing 300ms debounce lives inside useLiveTopic now; see lib/live.ts.
+  useLiveTopic(data?.session.id ? `retro:${data.session.id}` : null, load);
 
   // Roster = everyone who joined this retro *and* currently has it open.
   // Hooks must run before the early returns below.
