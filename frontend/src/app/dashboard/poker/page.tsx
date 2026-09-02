@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import { getSession } from '@/lib/auth'
 import { api } from '@/lib/api'
-import { createClient } from '@/lib/supabase/client'
 import { useLiveTopic } from '@/lib/live'
 import { toast } from 'sonner'
 import { TicketSidebar } from './ticket-sidebar'
@@ -98,9 +98,8 @@ function PokerPageInner() {
 
   // Load current user id
   useEffect(() => {
-    createClient().auth.getUser().then(({ data: d }) => {
-      setCurrentUserId(d.user?.id ?? null)
-    })
+    const session = getSession()
+    setCurrentUserId(session?.userId ?? null)
   }, [])
 
   const load = useCallback(async () => {

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerSession } from '@/lib/auth-server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -10,9 +10,8 @@ import { SignOutButton } from '@/components/ui/sign-out-button'
 import { AuthProvider, NoTeamOnly, RetroAccessOnly, TeamAdminOnly, TeamMemberOnly } from '@/components/providers/auth-provider'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth/login')
+  const session = await getServerSession()
+  if (!session) redirect('/auth/login')
 
   return (
     <AuthProvider>
@@ -74,7 +73,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </TeamAdminOnly>
           <div className="flex items-center justify-between px-3 py-2">
             <span className="max-w-[120px] truncate text-xs text-muted-foreground">
-              {user.email}
+              {session.email ?? session.displayName}
             </span>
             <div className="flex items-center gap-1">
               <ThemeSwitcher />

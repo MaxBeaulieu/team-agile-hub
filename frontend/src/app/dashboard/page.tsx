@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getServerSession } from '@/lib/auth-server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -8,11 +8,10 @@ import {
 import { NoTeamOnly, RetroAccessOnly, TeamMemberOnly } from '@/components/providers/auth-provider'
 
 export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth/login')
+  const session = await getServerSession()
+  if (!session) redirect('/auth/login')
 
-  const displayName = user.user_metadata?.full_name ?? user.email?.split('@')[0] ?? 'there'
+  const displayName = session.displayName || session.email?.split('@')[0] || 'there'
 
   return (
     <>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CalendarDays, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
-import { createClient } from '@/lib/supabase/client'
+import { getSession } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -79,10 +79,8 @@ export default function SprintsPage() {
 
   // Fetch teams once on mount
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setUserId(user.id)
-    })
+    const session = getSession()
+    if (session) setUserId(session.userId)
     api.get<Team[]>('/api/teams')
       .then((data) => {
         setTeams(data)

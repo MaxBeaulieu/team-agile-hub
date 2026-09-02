@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import * as signalR from '@microsoft/signalr'
+import { getAccessToken } from '@/lib/auth'
 
 export type PresenceEntry = {
   userId: string
@@ -28,10 +29,15 @@ function getConnection(): signalR.HubConnection {
   if (connection) return connection
 
   connection = new signalR.HubConnectionBuilder()
-    // TODO(pending architect answer — see message thread): finalize URL (relative
-    // vs NEXT_PUBLIC_API_URL-prefixed) and auth (accessTokenFactory transitional
-    // shim vs cookie-only per architecture doc §2.4, blocked on Phase 2 landing).
-    .withUrl('/hub/live')
+    // Relative URL: same-origin behind Caddy in production (see Caddyfile's
+    // /hub/* route), and Next.js's dev-server proxy locally. accessTokenFactory
+    // is required, not cookie-only: browsers can't attach a custom
+    // Authorization header (or even see an httpOnly cookie) on a WebSocket
+    // handshake, so SignalR appends the token as an `access_token` query
+    // param instead — AuthExtensions.AddAppJwtAuth reads it from there for
+    // `/hub/*` specifically. Resolves the open design question this TODO
+    // used to track.
+    .withUrl('/hub/live', { accessTokenFactory: () => getAccessToken() ?? '' })
     .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
     .build()
 

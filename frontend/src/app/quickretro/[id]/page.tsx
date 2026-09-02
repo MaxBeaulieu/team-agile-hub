@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { getSession } from "@/lib/auth";
 import { useLiveTopic } from "@/lib/live";
 import { toast } from "sonner";
 import {
@@ -313,8 +313,6 @@ function RetroInner({ retroId }: { retroId: string }) {
   const [notFound, setNotFound] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
 
-  const supabase = useMemo(() => createClient(), []);
-
   const load = useCallback(async () => {
     try {
       const result = await api.get<RetroData>(`/api/quickretro/${retroId}`);
@@ -335,10 +333,9 @@ function RetroInner({ retroId }: { retroId: string }) {
   }, [retroId]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user.id) setCurrentUserId(session.user.id);
-    });
-  }, [supabase]);
+    const session = getSession();
+    if (session?.userId) setCurrentUserId(session.userId);
+  }, []);
 
   useEffect(() => {
     load();

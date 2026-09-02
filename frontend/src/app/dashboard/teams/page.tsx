@@ -6,7 +6,7 @@ import { CreateTeamDialog } from './create-team-dialog'
 import { JoinTeamDialog } from './join-team-dialog'
 import { TeamCard } from './team-card'
 import { api } from '@/lib/api'
-import { createClient } from '@/lib/supabase/client'
+import { getSession } from '@/lib/auth'
 
 export type TeamWithMembers = {
   id: string
@@ -42,13 +42,11 @@ export default function TeamsPage() {
   }, [])
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        setUserId(user.id)
-        setUserEmail(user.email ?? '')
-      }
-    })
+    const session = getSession()
+    if (session) {
+      setUserId(session.userId)
+      setUserEmail(session.email ?? '')
+    }
     loadTeams()
   }, [loadTeams])
 

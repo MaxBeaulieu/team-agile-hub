@@ -15,8 +15,10 @@ DotEnv.Load(options: new DotEnvOptions(
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Auth � Supabase OIDC-based JWT validation (fetches JWKS automatically)
-builder.Services.AddSupabaseJwtAuth(builder.Configuration);
+// Auth — the backend's own HS256 session JWTs (see TokenService/AuthController).
+// Supabase Auth is gone entirely; no OIDC/JWKS lookups anywhere in this path.
+builder.Services.AddAppJwtAuth(builder.Configuration);
+builder.Services.AddSingleton<TokenService>();
 
 // CORS
 var allowedOrigins = builder.Configuration["Cors:AllowedOrigins"]?.Split(',')
@@ -89,6 +91,18 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
 var app = builder.Build();
+
+// Apply pending EF Core migrations at startup. This is what makes a fresh
+// Postgres volume (or a new migration added to the codebase) actually usable
+// without a manual `dotnet ef database update` step — see docker-compose.yml's
+// backend healthcheck comment and docs/architecture/selfhost-migration.md §2.3.
+// Not concurrency-safe across multiple replicas; one of the reasons `backend`
+// is pinned to a single replica (see docker-compose.yml top-of-file comment).
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
 
 if (app.Environment.IsDevelopment())
 {

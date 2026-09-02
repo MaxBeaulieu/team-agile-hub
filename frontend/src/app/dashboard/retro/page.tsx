@@ -13,7 +13,7 @@ import Link from "next/link";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { getSession } from "@/lib/auth";
 import { useLiveTopic } from "@/lib/live";
 import { toast } from "sonner";
 import {
@@ -464,8 +464,6 @@ function RetroInner({
   // Sprint name cached across 404 state
   const sprintNameRef = useRef<string>("Sprint");
 
-  const supabase = createClient();
-
   const load = useCallback(async () => {
     try {
       const result = await api.get<RetroData>(
@@ -495,11 +493,10 @@ function RetroInner({
     }
   }, [teamId, sprintId]);
 
-  // Get current user ID from Supabase session
+  // Get current user ID from the app's own session
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user.id) setCurrentUserId(session.user.id);
-    });
+    const session = getSession();
+    if (session?.userId) setCurrentUserId(session.userId);
   }, []);
 
   // Initial load

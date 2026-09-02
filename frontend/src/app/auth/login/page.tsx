@@ -1,9 +1,9 @@
-﻿"use client";
+"use client";
 
 export const dynamic = "force-dynamic";
 
 import { Suspense, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { login } from "@/lib/auth";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ThemeSwitcher } from "@/components/ui/theme-switcher";
@@ -16,33 +16,21 @@ function getSafeNextPath(value: string | null): string | null {
 }
 
 function LoginPageInner() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
   const nextPath = getSafeNextPath(searchParams.get("next"));
   const successRedirect = nextPath ?? "/dashboard";
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) setError(error.message);
-      else router.push(successRedirect);
+      await login();
+      router.push(successRedirect);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to reach Supabase. Check your network and env config.",
-      );
+      setError(err instanceof Error ? err.message : "Unable to reach the API.");
     } finally {
       setLoading(false);
     }
@@ -70,65 +58,24 @@ function LoginPageInner() {
           </div>
 
           <div className="rounded-xl border border-border bg-card p-6 space-y-4 shadow-sm">
-            <form onSubmit={handleLogin} className="space-y-3">
-              {error && (
-                <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  {error}
-                </p>
-              )}
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="email"
-                  className="text-xs font-medium text-muted-foreground"
-                >
-                  Email
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-ring focus:ring-1 focus:ring-ring transition-colors"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="password"
-                  className="text-xs font-medium text-muted-foreground"
-                >
-                  Password
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/50 focus:border-ring focus:ring-1 focus:ring-ring transition-colors"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
-              >
-                {loading ? "Signing in…" : "Sign in"}
-              </button>
-            </form>
-          </div>
-
-          <p className="mt-5 text-center text-xs text-muted-foreground">
-            No account?{" "}
-            <Link
-              href="/auth/signup"
-              className="text-foreground underline-offset-4 hover:underline"
+            {error && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleLogin}
+              disabled={loading}
+              className="w-full rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
             >
-              Create one
-            </Link>
-          </p>
+              {loading ? "Signing in..." : "Continue with test account"}
+            </button>
+            <p className="text-center text-[11px] text-muted-foreground">
+              Temporary sign-in -- Microsoft Entra ID SSO replaces this once Phase 2
+              of the self-host migration lands.
+            </p>
+          </div>
         </div>
       </main>
     </div>
@@ -138,7 +85,7 @@ function LoginPageInner() {
 function LoginFallback() {
   return (
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-      <p className="text-sm text-muted-foreground">Loading…</p>
+      <p className="text-sm text-muted-foreground">Loading...</p>
     </div>
   );
 }

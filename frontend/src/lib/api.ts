@@ -1,22 +1,28 @@
 /**
- * Typed API client that automatically attaches the Supabase access token
- * to every request to the C# backend.
+ * Typed API client that automatically attaches the app's own session access
+ * token to every request to the C# backend. Replaces the Supabase session
+ * token this used to read from `@supabase/supabase-js`.
+ *
+ * Empty-string default: in Docker the frontend Dockerfile deliberately bakes
+ * no NEXT_PUBLIC_API_URL, so requests go to a same-origin relative path and
+ * Caddy's `/api/*` route (see Caddyfile) forwards them to the backend. Local
+ * `npm run dev` (outside Docker) sets NEXT_PUBLIC_API_URL=http://localhost:5000
+ * in frontend/.env.local instead, since there's no Caddy in front of it there.
  */
-import { createClient } from '@/lib/supabase/client'
+import { getAccessToken } from '@/lib/auth'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
-async function getAuthHeaders(): Promise<HeadersInit> {
-  const supabase = createClient()
-  const { data: { session } } = await supabase.auth.getSession()
+function getAuthHeaders(): HeadersInit {
+  const token = getAccessToken()
   return {
     'Content-Type': 'application/json',
-    ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+    ...(token && { Authorization: `Bearer ${token}` }),
   }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = await getAuthHeaders()
+  const headers = getAuthHeaders()
   const res = await fetch(`${API_URL}${path}`, { ...init, headers })
   if (!res.ok) {
     const text = await res.text()

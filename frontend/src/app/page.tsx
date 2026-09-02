@@ -29,7 +29,7 @@ export default function HomePage() {
             Sign in
           </Link>
           <Link
-            href="/auth/signup"
+            href="/auth/login"
             className="px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity font-medium"
           >
             Get started
@@ -58,7 +58,7 @@ export default function HomePage() {
 
         <div className="flex flex-wrap justify-center gap-3">
           <Link
-            href="/auth/signup"
+            href="/auth/login"
             className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
           >
             Get started free

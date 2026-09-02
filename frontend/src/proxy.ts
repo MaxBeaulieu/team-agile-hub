@@ -1,5 +1,5 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SESSION_COOKIE } from "@/lib/session-cookie";
 
 function getSafeNextPath(value: string | null): string | null {
   if (!value) return null;
@@ -8,50 +8,20 @@ function getSafeNextPath(value: string | null): string | null {
   return value;
 }
 
+// Presence-only check: the session cookie holds the whole session (including
+// the access token) as plain JSON — see lib/auth.ts. Route gating here just
+// decides whether to redirect to /auth/login, so a presence check is enough;
+// signature/expiry validation happens per-request on the backend regardless,
+// same as before this rewrite (defense in depth already lived there, not in
+// middleware). No Supabase (or any auth SDK) involved here anymore.
 export async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn(
-        "Supabase env vars are missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in frontend/.env.local.",
-      );
-      return supabaseResponse;
-    }
-
-    throw new Error(
-      "Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
-    );
-  }
-
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) =>
-          request.cookies.set(name, value),
-        );
-        supabaseResponse = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) =>
-          supabaseResponse.cookies.set(name, value, options),
-        );
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const hasSession = !!request.cookies.get(SESSION_COOKIE)?.value;
 
   const isAuthRoute = request.nextUrl.pathname.startsWith("/auth");
   const isRetroJoinRoute = request.nextUrl.pathname.startsWith("/retro/join");
   const isPublicRoute = request.nextUrl.pathname === "/" || isRetroJoinRoute;
 
-  if (!user && !isAuthRoute && !isPublicRoute) {
+  if (!hasSession && !isAuthRoute && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     const requested = `${request.nextUrl.pathname}${request.nextUrl.search}`;
@@ -59,7 +29,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthRoute) {
+  if (hasSession && isAuthRoute) {
     const next = getSafeNextPath(request.nextUrl.searchParams.get("next"));
     if (next) {
       return NextResponse.redirect(new URL(next, request.url));
@@ -70,7 +40,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(fallback);
   }
 
-  return supabaseResponse;
+  return NextResponse.next({ request });
 }
 
 export const config = {

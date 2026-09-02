@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { getSession } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 
 export type RetroTemplate = {
@@ -69,11 +69,8 @@ export function ColumnTemplatePicker({
   }, []);
 
   useEffect(() => {
-    createClient()
-      .auth.getUser()
-      .then(({ data: { user } }) => {
-        if (user) setUserId(user.id);
-      });
+    const session = getSession();
+    if (session) setUserId(session.userId);
     load();
   }, [load]);
 

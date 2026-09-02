@@ -1,0 +1,8 @@
+# Local-only override for smoke testing on a machine where ports 80/443 are
+# already taken by an unrelated service. NOT part of the DevOps deliverable —
+# delete this file; docker-compose.yml's 80/443 mapping is what ships.
+services:
+  proxy:
+    ports: !override
+      - "8080:80"
+      - "8443:443"

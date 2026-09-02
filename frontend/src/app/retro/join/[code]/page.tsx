@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ThemeSwitcher } from '@/components/ui/theme-switcher'
-import { createClient } from '@/lib/supabase/client'
+import { getSession, guestJoin, logout } from '@/lib/auth'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 
@@ -40,7 +40,6 @@ export default function RetroJoinPage() {
   const params = useParams<{ code: string }>()
   const code = params.code
   const router = useRouter()
-  const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
   const [preview, setPreview] = useState<JoinTarget | null>(null)
@@ -70,8 +69,8 @@ export default function RetroJoinPage() {
         if (cancelled) return
         setPreview(target)
 
-        const { data: { session } } = await supabase.auth.getSession()
-        const signedIn = !!session && !session.user.is_anonymous
+        const session = getSession()
+        const signedIn = !!session && !session.isAnonymous
 
         if (signedIn) {
           try {
@@ -99,13 +98,13 @@ export default function RetroJoinPage() {
 
     init()
     return () => { cancelled = true }
-  }, [code, router, supabase, join])
+  }, [code, router, join])
 
-  async function handleSignIn() {
-    // Drop any throwaway anonymous session first, otherwise the sign-in form
+  function handleSignIn() {
+    // Drop any throwaway guest session first, otherwise the sign-in flow
     // would run on top of it.
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user.is_anonymous) await supabase.auth.signOut()
+    const session = getSession()
+    if (session?.isAnonymous) logout()
     localStorage.removeItem(storageKey(code))
     router.push(`/auth/login?next=${encodeURIComponent(`/retro/join/${code}`)}`)
   }
@@ -116,10 +115,8 @@ export default function RetroJoinPage() {
 
     setJoining(true)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        const { error } = await supabase.auth.signInAnonymously()
-        if (error) throw error
+      if (!getSession()) {
+        await guestJoin()
       }
 
       const result = await join(displayName.trim())
