@@ -9,6 +9,13 @@
 # Config: copy .env.example to .env at the repo root and fill in real values
 # before running `docker compose up -d`.
 #
+# Registry: `backend`/`frontend` declare both `build:` (so `docker compose
+# build` still works for local dev/CI) and `image:` (a docker-registry.ao1.
+# amilia.com tag, so `docker compose push` after building uploads it there
+# and ops can `docker compose pull` instead of building from source). See
+# scripts/build-and-push.ps1 for the one-shot build+push command. Override
+# the registry host or tag via the REGISTRY / IMAGE_TAG env vars if needed.
+#
 # Do not scale `backend` past 1 replica. Three independent reasons (all fail
 # silently, not loudly): SignalR presence is an in-memory registry that would
 # fragment across replicas; realtime invalidations only reach the replica
@@ -24,6 +31,8 @@
 # correct YAML (`js-yaml`); NOT validated with `docker compose config` /
 # `docker build` — Docker wasn't available in the environment this was
 # authored in. Run both before relying on this.
+
+name: command-center
 
 services:
   postgres:
@@ -54,6 +63,7 @@ services:
       retries: 5
 
   backend:
+    image: ${REGISTRY:-docker-registry.ao1.amilia.com}/command-center-backend:${IMAGE_TAG:-latest}
     build:
       context: ./backend
     restart: unless-stopped
@@ -71,8 +81,8 @@ services:
       ASPNETCORE_HTTP_PORTS: "8080"
       ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_APP_USER};Password=${POSTGRES_APP_PASSWORD}"
       Jwt__SigningSecret: ${JWT_SIGNING_SECRET}
-      Jwt__Issuer: team-agile-hub
-      Jwt__Audience: team-agile-hub
+      Jwt__Issuer: command-center
+      Jwt__Audience: command-center
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-15}
       Jwt__StaffRefreshDays: ${JWT_STAFF_REFRESH_DAYS:-7}
       Jwt__GuestRefreshDays: ${JWT_GUEST_REFRESH_DAYS:-30}
@@ -113,6 +123,7 @@ services:
       start_period: 20s
 
   frontend:
+    image: ${REGISTRY:-docker-registry.ao1.amilia.com}/command-center-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
     restart: unless-stopped

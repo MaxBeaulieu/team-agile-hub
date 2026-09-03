@@ -23,8 +23,8 @@ public class TokenService(IConfiguration config)
     {
         var secret = config["Jwt:SigningSecret"]
             ?? throw new InvalidOperationException("Jwt:SigningSecret is not configured.");
-        var issuer = config["Jwt:Issuer"] ?? "team-agile-hub";
-        var audience = config["Jwt:Audience"] ?? "team-agile-hub";
+        var issuer = config["Jwt:Issuer"] ?? "command-center";
+        var audience = config["Jwt:Audience"] ?? "command-center";
 
         var lifetimeDays = double.Parse(user.IsAnonymous
             ? config["Jwt:GuestRefreshDays"] ?? "30"

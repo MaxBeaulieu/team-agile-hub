@@ -1,9 +1,3 @@
-# Multi-stage build for the Next.js frontend — SELFHOST_MIGRATION_PLAN.md
-# Phase 6. Uses `output: 'standalone'` (next.config.ts) so the runtime image
-# needs neither node_modules nor the Next.js CLI — just `node server.js`.
-#
-# Node 20, matching the README's stated minimum ("Node.js | 20+").
-
 FROM node:20-alpine AS base
 
 # ---- Dependencies -----------------------------------------------------------

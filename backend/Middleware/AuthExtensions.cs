@@ -30,8 +30,8 @@ public static class AuthExtensions
                 "App auth is not configured. Set Jwt:SigningSecret (>= 32 bytes).");
         }
 
-        var issuer = config["Jwt:Issuer"] ?? "team-agile-hub";
-        var audience = config["Jwt:Audience"] ?? "team-agile-hub";
+        var issuer = config["Jwt:Issuer"] ?? "command-center";
+        var audience = config["Jwt:Audience"] ?? "command-center";
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
